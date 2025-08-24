@@ -635,6 +635,7 @@ class SchemaTransformer {
         }
       case constants.jsPrimitives.Buffer.type.toLowerCase():
       case constants.jsPrimitives.Uint8Array.type.toLowerCase():
+      case constants.jsPrimitives.File.type.toLowerCase():
         return {
           type: constants.jsPrimitives.Buffer.value,
           format: constants.jsPrimitives.Buffer.format,
