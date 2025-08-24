@@ -382,6 +382,172 @@ app.listen(3000, () => {
 })
 ```
 
+#### Complete POST API Example with Schema Validation
+
+Here's a complete example of a POST endpoint that uses the generated schemas for both request validation and response structure:
+
+```typescript
+import express from 'express'
+import swaggerUi from 'swagger-ui-express'
+import { transform } from 'ts-class-to-openapi'
+import {
+  IsString,
+  IsEmail,
+  IsNotEmpty,
+  IsInt,
+  Min,
+  Max,
+  IsOptional,
+} from 'class-validator'
+
+// Define your entities
+class User {
+  @IsInt()
+  @Min(1)
+  id: number
+
+  @IsString()
+  @IsNotEmpty()
+  name: string
+
+  @IsEmail()
+  email: string
+
+  @IsInt()
+  @Min(18)
+  @Max(100)
+  age: number
+
+  @IsOptional()
+  @IsString()
+  phone?: string
+}
+
+// DTO for creating a user
+class CreateUserDto {
+  @IsString()
+  @IsNotEmpty()
+  name: string
+
+  @IsEmail()
+  email: string
+
+  @IsInt()
+  @Min(18)
+  @Max(100)
+  age: number
+
+  @IsOptional()
+  @IsString()
+  phone?: string
+}
+
+// Response wrapper (not transformed, defined manually in OpenAPI spec)
+interface ApiResponse<T> {
+  data: T
+  success: boolean
+}
+
+const app = express()
+app.use(express.json())
+
+// Generate schemas only for your entities
+const userSchema = transform(User)
+const createUserSchema = transform(CreateUserDto)
+
+// Create OpenAPI specification with POST endpoint
+const swaggerSpec = {
+  openapi: '3.1.0',
+  info: { title: 'User Management API', version: '1.0.0' },
+  components: {
+    schemas: {
+      [userSchema.name]: userSchema.schema,
+      [createUserSchema.name]: createUserSchema.schema,
+      // ApiResponse schema defined manually
+      UserApiResponse: {
+        type: 'object',
+        properties: {
+          data: { $ref: `#/components/schemas/${userSchema.name}` },
+          success: { type: 'boolean' },
+        },
+        required: ['data', 'success'],
+      },
+    },
+  },
+  paths: {
+    '/users': {
+      post: {
+        summary: 'Create a new user',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: { $ref: `#/components/schemas/${createUserSchema.name}` },
+            },
+          },
+        },
+        responses: {
+          '201': {
+            description: 'User created successfully',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/UserApiResponse' },
+              },
+            },
+          },
+          '400': {
+            description: 'Invalid input data',
+          },
+        },
+      },
+    },
+  },
+}
+
+// Implement the POST endpoint
+app.post('/users', (req, res) => {
+  try {
+    // In a real application, you would validate the request body
+    // and save to database
+    const userData = req.body as CreateUserDto
+
+    // Mock user creation (replace with actual database logic)
+    const newUser: User = {
+      id: Math.floor(Math.random() * 1000) + 1,
+      ...userData,
+    }
+
+    // Return response matching the schema
+    const response: ApiResponse<User> = {
+      data: newUser,
+      success: true,
+    }
+
+    res.status(201).json(response)
+  } catch (error) {
+    res.status(400).json({
+      data: null,
+      success: false,
+      error: 'Invalid input data',
+    })
+  }
+})
+
+// Setup Swagger UI
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec))
+
+app.listen(3000, () => {
+  console.log('API docs available at http://localhost:3000/api-docs')
+})
+```
+
+This example demonstrates:
+
+- **Request Schema**: Uses `CreateUserDto` schema for POST body validation
+- **Response Schema**: Returns data in `{ data: User, success: boolean }` format
+- **OpenAPI Documentation**: Complete Swagger specification with request/response schemas
+- **Type Safety**: Full TypeScript support for request and response types
+
 ### File Upload Example
 
 ```typescript
