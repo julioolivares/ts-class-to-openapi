@@ -1,0 +1,30 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "build:watch",
+      "type": "shell",
+      "command": "npm",
+      "args": ["run", "build:watch"],
+      "group": "build",
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "rollup",
+        "fileLocation": "relative",
+        "pattern": {
+          "regexp": "^(.*):(\\d+):(\\d+):\\s+(error|warning)\\s*(.*)$",
+          "file": 1,
+          "line": 2,
+          "column": 3,
+          "severity": 4,
+          "message": 5
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "^rollup v.*$|^bundles.*$",
+          "endsPattern": "^\\[.*\\] waiting for changes\\.\\.\\.$"
+        }
+      }
+    }
+  ]
+}

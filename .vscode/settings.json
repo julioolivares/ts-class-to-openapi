@@ -1,0 +1,31 @@
+{
+  "chat.tools.terminal.autoApprove": {
+    "rm": false,
+    "rmdir": false,
+    "del": false,
+    "kill": false,
+    "curl": false,
+    "wget": false,
+    "eval": false,
+    "chmod": false,
+    "chown": false,
+    "/^Remove-Item\\b/i": false
+  },
+  "editor.formatOnSave": true,
+  "editor.defaultFormatter": "esbenp.prettier-vscode",
+  "editor.codeActionsOnSave": {
+    "source.fixAll": "explicit"
+  },
+  "[typescript]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[javascript]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[json]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[markdown]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  }
+}
