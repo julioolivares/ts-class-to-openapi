@@ -1,3 +1,3 @@
 import { transform } from './transformer'
-
-export { transform }
+import { SchemaType } from './types'
+export { transform, type SchemaType }
