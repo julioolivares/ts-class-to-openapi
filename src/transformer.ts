@@ -573,9 +573,9 @@ class SchemaTransformer {
       // Apply decorators if present
       this.applyDecorators(property.decorators, schema, property.name)
 
-      // If no decorators are present, apply sensible defaults based on TypeScript types
+      // If no decorators are present, apply type-based format specifications
       if (property.decorators.length === 0) {
-        this.applySensibleDefaults(property, schema)
+        this.applyTypeBasedFormats(property, schema)
       }
 
       // Determine if property should be required based on decorators and optional status
@@ -797,66 +797,40 @@ class SchemaTransformer {
    * @param schema - The schema object to modify
    * @private
    */
-  private applySensibleDefaults(
+  /**
+   * Applies OpenAPI format specifications based on TypeScript types.
+   * This method is called when no decorators are present to set appropriate
+   * format values for primitive types according to OpenAPI specification.
+   *
+   * @param property - The property information containing type details
+   * @param schema - The schema object to modify
+   * @private
+   */
+  private applyTypeBasedFormats(
     property: PropertyInfo,
     schema: SchemaType
   ): void {
     const propertyName = property.name
     const propertyType = property.type.toLowerCase()
 
-    // Add examples based on property names and types
     const propertySchema = schema.properties[propertyName]
 
-    // Add common format hints based on property names
-    if (propertyName.includes('email') && propertySchema.type === 'string') {
-      propertySchema.format = 'email'
-    } else if (
-      propertyName.includes('password') &&
-      propertySchema.type === 'string'
-    ) {
-      propertySchema.format = 'password'
-      propertySchema.minLength = 8
-    } else if (
-      propertyName.includes('url') &&
-      propertySchema.type === 'string'
-    ) {
-      propertySchema.format = 'uri'
-    } else if (
-      propertyName.includes('phone') &&
-      propertySchema.type === 'string'
-    ) {
-      propertySchema.pattern = '^[+]?[1-9]\\d{1,14}$'
-    }
-
-    // Add reasonable constraints based on common property names
-    if (propertySchema.type === 'string') {
-      if (
-        propertyName === 'name' ||
-        propertyName === 'firstName' ||
-        propertyName === 'lastName'
-      ) {
-        propertySchema.minLength = 1
-        propertySchema.maxLength = 100
-      } else if (propertyName === 'description' || propertyName === 'bio') {
-        propertySchema.maxLength = 500
-      } else if (propertyName === 'title') {
-        propertySchema.minLength = 1
-        propertySchema.maxLength = 200
-      }
-    }
-
-    if (propertySchema.type === 'integer' || propertySchema.type === 'number') {
-      if (propertyName === 'age') {
-        propertySchema.minimum = 0
-        propertySchema.maximum = 150
-      } else if (propertyName === 'id') {
-        propertySchema.minimum = 1
-      } else if (
-        propertyName.includes('count') ||
-        propertyName.includes('quantity')
-      ) {
-        propertySchema.minimum = 0
-      }
+    switch (propertyType) {
+      case constants.jsPrimitives.Number.value:
+        propertySchema.format = constants.jsPrimitives.Number.format
+        break
+      case constants.jsPrimitives.BigInt.value:
+        propertySchema.format = constants.jsPrimitives.BigInt.format
+        break
+      case constants.jsPrimitives.Date.value:
+        propertySchema.format = constants.jsPrimitives.Date.format
+        break
+      case constants.jsPrimitives.Buffer.value:
+      case constants.jsPrimitives.Uint8Array.value:
+      case constants.jsPrimitives.File.value:
+      case constants.jsPrimitives.UploadFile.value:
+        propertySchema.format = constants.jsPrimitives.UploadFile.format
+        break
     }
   }
 

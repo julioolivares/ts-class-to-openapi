@@ -13,10 +13,10 @@ const TS_CONFIG_DEFAULT_PATH = path.resolve(process.cwd(), 'tsconfig.json')
 
 const jsPrimitives = {
   String: { type: 'String', value: 'string' },
-  Number: { type: 'Number', value: 'number' },
+  Number: { type: 'Number', value: 'number', format: 'float' },
   Boolean: { type: 'Boolean', value: 'boolean' },
   Symbol: { type: 'Symbol', value: 'symbol' },
-  BigInt: { type: 'BigInt', value: 'integer' },
+  BigInt: { type: 'BigInt', value: 'integer', format: 'int64' },
   null: { type: 'null', value: 'null' },
   Object: { type: 'Object', value: 'object' },
   Array: { type: 'Array', value: 'array' },
