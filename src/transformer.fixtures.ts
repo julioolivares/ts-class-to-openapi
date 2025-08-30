@@ -46,6 +46,7 @@ const validatorDecorators = {
   ArrayNotEmpty: { name: 'ArrayNotEmpty' },
   ArrayMaxSize: { name: 'ArrayMaxSize' },
   ArrayMinSize: { name: 'ArrayMinSize' },
+  IsEnum: { name: 'IsEnum', type: 'string' },
 }
 
 const constants = {

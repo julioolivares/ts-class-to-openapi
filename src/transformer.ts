@@ -1182,8 +1182,214 @@ class SchemaTransformer {
         case constants.validatorDecorators.ArrayMaxSize.name:
           schema.properties[propertyName].maxItems = decorator.arguments[0]
           break
+        case constants.validatorDecorators.IsEnum.name:
+          this.applyEnumDecorator(decorator, schema, propertyName, isArrayType)
+          break
       }
     }
+  }
+
+  /**
+   * Applies the @IsEnum decorator to a property, handling both primitive values and object enums.
+   * Supports arrays of enum values as well.
+   *
+   * @param decorator - The IsEnum decorator information
+   * @param schema - The schema object to modify
+   * @param propertyName - The name of the property
+   * @param isArrayType - Whether the property is an array type
+   * @private
+   */
+  private applyEnumDecorator(
+    decorator: DecoratorInfo,
+    schema: SchemaType,
+    propertyName: string,
+    isArrayType: boolean
+  ): void {
+    if (!decorator.arguments || decorator.arguments.length === 0) {
+      return
+    }
+
+    const enumArg = decorator.arguments[0]
+    let enumValues: any[] = []
+
+    // Handle different enum argument types
+    if (typeof enumArg === 'string') {
+      // This is likely a reference to an enum type name
+      // We need to try to resolve this to actual enum values
+      enumValues = this.resolveEnumValues(enumArg)
+    } else if (typeof enumArg === 'object' && enumArg !== null) {
+      // Object enum - extract values
+      if (Array.isArray(enumArg)) {
+        // Already an array of values
+        enumValues = enumArg
+      } else {
+        // Enum object - get all values
+        enumValues = Object.values(enumArg)
+      }
+    }
+
+    // If we couldn't resolve enum values, fall back to string type without enum constraint
+    if (enumValues.length === 0) {
+      if (!isArrayType) {
+        schema.properties[propertyName].type = 'string'
+      } else if (schema.properties[propertyName].items) {
+        schema.properties[propertyName].items.type = 'string'
+      }
+      return
+    }
+
+    // Determine the type based on enum values
+    let enumType = 'string'
+    if (enumValues.length > 0) {
+      const firstValue = enumValues[0]
+      if (typeof firstValue === 'number') {
+        enumType = 'number'
+      } else if (typeof firstValue === 'boolean') {
+        enumType = 'boolean'
+      }
+    }
+
+    // Apply enum to schema
+    if (!isArrayType) {
+      schema.properties[propertyName].type = enumType
+      schema.properties[propertyName].enum = enumValues
+    } else if (schema.properties[propertyName].items) {
+      schema.properties[propertyName].items.type = enumType
+      schema.properties[propertyName].items.enum = enumValues
+    }
+  }
+
+  /**
+   * Attempts to resolve enum values from an enum type name.
+   * This searches through the TypeScript AST to find the enum declaration
+   * and extract its values.
+   *
+   * @param enumTypeName - The name of the enum type
+   * @returns Array of enum values if found, empty array otherwise
+   * @private
+   */
+  private resolveEnumValues(enumTypeName: string): any[] {
+    // Search for enum declarations in source files
+    for (const sourceFile of this.program.getSourceFiles()) {
+      if (sourceFile.isDeclarationFile) continue
+      if (sourceFile.fileName.includes('node_modules')) continue
+
+      const enumValues = this.findEnumValues(sourceFile, enumTypeName)
+      if (enumValues.length > 0) {
+        return enumValues
+      }
+    }
+
+    return []
+  }
+
+  /**
+   * Finds enum values in a specific source file.
+   *
+   * @param sourceFile - The source file to search
+   * @param enumTypeName - The name of the enum to find
+   * @returns Array of enum values if found, empty array otherwise
+   * @private
+   */
+  private findEnumValues(
+    sourceFile: ts.SourceFile,
+    enumTypeName: string
+  ): any[] {
+    let enumValues: any[] = []
+
+    const visit = (node: ts.Node) => {
+      // Handle TypeScript enum declarations
+      if (ts.isEnumDeclaration(node) && node.name?.text === enumTypeName) {
+        enumValues = this.extractEnumValues(node)
+        return
+      }
+
+      // Handle const object declarations (like const Status = { ... } as const)
+      if (ts.isVariableStatement(node)) {
+        for (const declaration of node.declarationList.declarations) {
+          if (
+            ts.isVariableDeclaration(declaration) &&
+            ts.isIdentifier(declaration.name) &&
+            declaration.name.text === enumTypeName &&
+            declaration.initializer
+          ) {
+            let initializer = declaration.initializer
+
+            // Handle "as const" assertions
+            if (ts.isAsExpression(initializer) && initializer.expression) {
+              initializer = initializer.expression
+            }
+
+            enumValues = this.extractObjectEnumValues(initializer)
+            return
+          }
+        }
+      }
+
+      ts.forEachChild(node, visit)
+    }
+
+    visit(sourceFile)
+    return enumValues
+  }
+
+  /**
+   * Extracts values from a TypeScript enum declaration.
+   *
+   * @param enumNode - The enum declaration node
+   * @returns Array of enum values
+   * @private
+   */
+  private extractEnumValues(enumNode: ts.EnumDeclaration): any[] {
+    const values: any[] = []
+
+    for (const member of enumNode.members) {
+      if (member.initializer) {
+        // Handle initialized enum members
+        if (ts.isStringLiteral(member.initializer)) {
+          values.push(member.initializer.text)
+        } else if (ts.isNumericLiteral(member.initializer)) {
+          values.push(Number(member.initializer.text))
+        }
+      } else {
+        // Handle auto-incremented numeric enums
+        if (values.length === 0) {
+          values.push(0)
+        } else {
+          const lastValue = values[values.length - 1]
+          if (typeof lastValue === 'number') {
+            values.push(lastValue + 1)
+          }
+        }
+      }
+    }
+
+    return values
+  }
+
+  /**
+   * Extracts values from object literal enum (const object as const).
+   *
+   * @param initializer - The object literal initializer
+   * @returns Array of enum values
+   * @private
+   */
+  private extractObjectEnumValues(initializer: ts.Expression): any[] {
+    const values: any[] = []
+
+    if (ts.isObjectLiteralExpression(initializer)) {
+      for (const property of initializer.properties) {
+        if (ts.isPropertyAssignment(property) && property.initializer) {
+          if (ts.isStringLiteral(property.initializer)) {
+            values.push(property.initializer.text)
+          } else if (ts.isNumericLiteral(property.initializer)) {
+            values.push(Number(property.initializer.text))
+          }
+        }
+      }
+    }
+
+    return values
   }
 
   /**

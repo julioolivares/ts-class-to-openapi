@@ -4,12 +4,17 @@
 
 A powerful library that automatically converts your TypeScript classes into OpenAPI-compatible schemas. Works with **pure TypeScript classes** and **class-validator decorated classes**, with zero runtime dependencies.
 
-> **🎯 New Feature**: Now supports **pure TypeScript classes** without requiring any decorators or external dependencies! Perfect for transforming existing codebases instantly.
+> **🎯 Latest Features**:
+>
+> - **Pure TypeScript classes** without requiring any decorators or external dependencies!
+> - **Full enum support** with `@IsEnum` decorator for string, numeric, and object enums
+> - Perfect for transforming existing codebases instantly.
 
 ## 🚀 Key Features
 
 - ✅ **Pure TypeScript Support** - Transform any TypeScript class without decorators
 - ✅ **class-validator Compatible** - Enhanced schemas with validation decorators
+- ✅ **Enum Support** - Full support for TypeScript enums and object enums with @IsEnum
 - ✅ **CommonJS & ESM Compatible** - Works in any Node.js project
 - ✅ **Zero Runtime Dependencies** - No `reflect-metadata` or `emitDecoratorMetadata` required
 - ✅ **OpenAPI 3.1.0** - Industry-standard schema generation
@@ -81,7 +86,12 @@ This library is **100% compatible with both CommonJS and ESM**, allowing you to 
 ```typescript
 // ESM import
 import { transform } from 'ts-class-to-openapi'
-import { IsString, IsEmail, IsNotEmpty } from 'class-validator'
+import { IsString, IsEmail, IsNotEmpty, IsEnum } from 'class-validator'
+
+enum UserType {
+  ADMIN = 'admin',
+  USER = 'user',
+}
 
 class User {
   @IsString()
@@ -90,6 +100,9 @@ class User {
 
   @IsEmail()
   email: string
+
+  @IsEnum(UserType)
+  type: UserType
 }
 
 const schema = transform(User)
@@ -101,7 +114,12 @@ console.log(JSON.stringify(schema, null, 2))
 ```typescript
 // TypeScript with CommonJS configuration
 import { transform } from 'ts-class-to-openapi'
-import { IsString, IsEmail, IsNotEmpty } from 'class-validator'
+import { IsString, IsEmail, IsNotEmpty, IsEnum } from 'class-validator'
+
+enum UserType {
+  ADMIN = 'admin',
+  USER = 'user',
+}
 
 class User {
   @IsString()
@@ -110,6 +128,9 @@ class User {
 
   @IsEmail()
   email: string
+
+  @IsEnum(UserType)
+  type: UserType
 }
 
 const schema = transform(User)
@@ -173,7 +194,21 @@ import {
   IsPositive,
   IsArray,
   IsNotEmpty,
+  IsEnum,
 } from 'class-validator'
+
+// Define enums for better API contracts
+enum ProductStatus {
+  DRAFT = 'draft',
+  PUBLISHED = 'published',
+  ARCHIVED = 'archived',
+}
+
+enum Priority {
+  LOW = 1,
+  MEDIUM = 2,
+  HIGH = 3,
+}
 
 // Enhanced with validation decorators
 class Product {
@@ -188,6 +223,13 @@ class Product {
   @IsNumber()
   @IsPositive()
   price: number
+
+  @IsEnum(ProductStatus)
+  @IsNotEmpty()
+  status: ProductStatus
+
+  @IsEnum(Priority)
+  priority?: Priority
 
   @IsArray()
   categories: string[]
@@ -204,6 +246,7 @@ const schema = transform(Product)
 - ✅ String length constraints
 - ✅ Number range validation
 - ✅ Array size validation
+- ✅ Enum value constraints with automatic type detection
 
 ## 🚀 Quick Start
 
@@ -264,7 +307,7 @@ console.log(JSON.stringify(result, null, 2))
         "format": "date-time"
       }
     },
-    "required": []
+    "required": ["id", "name", "email", "age", "isActive", "tags", "createdAt"]
   }
 }
 ```
@@ -319,7 +362,7 @@ console.log(JSON.stringify(result, null, 2))
         "maximum": 100
       }
     },
-    "required": ["name"]
+    "required": ["name", "email", "age"]
   }
 }
 ```
@@ -750,7 +793,7 @@ const schema = transform(User)
         "format": "binary"
       }
     },
-    "required": ["id", "tags", "role", "avatar"]
+    "required": ["id", "name", "email", "tags", "createdAt", "role", "files", "avatar"]
   }
 }
 ```
@@ -765,7 +808,7 @@ const schema = transform(User)
 | **Configuration**      | None                                  | `experimentalDecorators: true`       |
 | **Type Detection**     | Automatic                             | Automatic + Decorators               |
 | **Validation Rules**   | Basic types only                      | Rich validation constraints          |
-| **Required Fields**    | None (all optional)                   | Specified by decorators              |
+| **Required Fields**    | Based on TypeScript optional operator (`?`) | TypeScript optional operator + decorators |
 | **String Constraints** | None                                  | Min/max length, patterns             |
 | **Number Constraints** | None                                  | Min/max values, positive             |
 | **Array Constraints**  | None                                  | Min/max items, non-empty             |
@@ -779,11 +822,11 @@ const schema = transform(User)
 
 ```typescript
 class User {
-  name: string
-  email: string
-  age: number
+  name: string    // Required (no ? operator)
+  email: string   // Required (no ? operator)  
+  age: number     // Required (no ? operator)
 }
-// Generates: All properties optional, basic types
+// Generates: All properties required (no ? operator), basic types
 ```
 
 **Enhanced Class:**
@@ -801,21 +844,126 @@ class User {
   @Min(18)
   age: number
 }
-// Generates: name required, email format validation, age minimum 18
+// Generates: All properties required, email format validation, age minimum 18
 ```
 
 ## 🎨 Supported Decorators Reference
 
 ### Type Validation Decorators
 
-| Decorator      | Generated Schema Property             | Description                 |
-| -------------- | ------------------------------------- | --------------------------- |
-| `@IsString()`  | `type: "string"`                      | String type validation      |
-| `@IsInt()`     | `type: "integer", format: "int32"`    | Integer type validation     |
-| `@IsNumber()`  | `type: "number", format: "double"`    | Number type validation      |
-| `@IsBoolean()` | `type: "boolean"`                     | Boolean type validation     |
-| `@IsEmail()`   | `type: "string", format: "email"`     | Email format validation     |
-| `@IsDate()`    | `type: "string", format: "date-time"` | Date-time format validation |
+| Decorator             | Generated Schema Property                       | Description                 |
+| --------------------- | ----------------------------------------------- | --------------------------- |
+| `@IsString()`         | `type: "string"`                                | String type validation      |
+| `@IsInt()`            | `type: "integer", format: "int32"`              | Integer type validation     |
+| `@IsNumber()`         | `type: "number", format: "double"`              | Number type validation      |
+| `@IsBoolean()`        | `type: "boolean"`                               | Boolean type validation     |
+| `@IsEmail()`          | `type: "string", format: "email"`               | Email format validation     |
+| `@IsDate()`           | `type: "string", format: "date-time"`           | Date-time format validation |
+| `@IsEnum(enumObject)` | `type: "string/number/boolean", enum: [values]` | Enum constraint validation  |
+
+### Enum Validation with @IsEnum
+
+The `@IsEnum()` decorator provides powerful enum validation with automatic type detection and value extraction:
+
+```typescript
+import { transform } from 'ts-class-to-openapi'
+import { IsEnum, IsNotEmpty, IsArray } from 'class-validator'
+
+// String enum
+enum UserRole {
+  ADMIN = 'admin',
+  USER = 'user',
+  MODERATOR = 'moderator',
+}
+
+// Numeric enum
+enum Priority {
+  LOW = 1,
+  MEDIUM = 2,
+  HIGH = 3,
+}
+
+// Auto-incremented enum
+enum Size {
+  SMALL, // 0
+  MEDIUM, // 1
+  LARGE, // 2
+}
+
+// Object enum with 'as const'
+const Status = {
+  ACTIVE: 'active',
+  INACTIVE: 'inactive',
+  PENDING: 'pending',
+} as const
+
+class TaskEntity {
+  @IsEnum(UserRole)
+  @IsNotEmpty()
+  assignedRole: UserRole // Required enum
+
+  @IsEnum(Priority)
+  priority?: Priority // Optional enum
+
+  @IsEnum(Size)
+  size?: Size // Auto-incremented enum
+
+  @IsEnum(Status)
+  status?: keyof typeof Status // Object enum
+
+  @IsEnum(UserRole)
+  @IsArray()
+  allowedRoles?: UserRole[] // Array of enums
+}
+
+const result = transform(TaskEntity)
+```
+
+**Generated Output:**
+
+```json
+{
+  "name": "TaskEntity",
+  "schema": {
+    "type": "object",
+    "properties": {
+      "assignedRole": {
+        "type": "string",
+        "enum": ["admin", "user", "moderator"]
+      },
+      "priority": {
+        "type": "number",
+        "enum": [1, 2, 3]
+      },
+      "size": {
+        "type": "number",
+        "enum": [0, 1, 2]
+      },
+      "status": {
+        "type": "string",
+        "enum": ["active", "inactive", "pending"]
+      },
+      "allowedRoles": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": ["admin", "user", "moderator"]
+        }
+      }
+    },
+    "required": ["assignedRole"]
+  }
+}
+```
+
+**Supported Enum Types:**
+
+- ✅ **String enums**: `enum Color { RED = 'red' }`
+- ✅ **Numeric enums**: `enum Status { ACTIVE = 1 }`
+- ✅ **Auto-incremented enums**: `enum Size { SMALL, MEDIUM }`
+- ✅ **Object enums**: `const Colors = { RED: 'red' } as const`
+- ✅ **Mixed enums**: `enum Mixed { NUM = 1, STR = 'text' }`
+- ✅ **Array of enums**: `roles: UserRole[]`
 
 ### String Validation Decorators
 
@@ -933,7 +1081,7 @@ console.log(JSON.stringify(schema, null, 2))
         "format": "binary"
       }
     },
-    "required": ["document"]
+    "required": ["document", "attachments"]
   }
 }
 ```
@@ -980,6 +1128,75 @@ const result = transform(User)
 console.log(result.name) // "User"
 console.log(result.schema) // OpenAPI schema object
 ```
+
+## 🔍 Required Properties Rules
+
+Understanding how properties are marked as required is crucial for generating accurate schemas:
+
+### TypeScript Optional Operator (`?`)
+
+The presence or absence of the TypeScript optional operator (`?`) determines if a property is required:
+
+```typescript
+class User {
+  name: string    // ✅ REQUIRED (no ? operator)
+  email: string   // ✅ REQUIRED (no ? operator)
+  age?: number    // ❌ OPTIONAL (has ? operator)
+  bio?: string    // ❌ OPTIONAL (has ? operator)
+}
+
+// Generated schema:
+// "required": ["name", "email"]
+```
+
+### class-validator Decorators Override
+
+When using class-validator decorators, they can override the TypeScript optional behavior:
+
+```typescript
+import { IsNotEmpty, IsOptional } from 'class-validator'
+
+class User {
+  @IsNotEmpty()
+  requiredField?: string  // ✅ REQUIRED (@IsNotEmpty overrides ?)
+  
+  @IsOptional()
+  optionalField: string   // ❌ OPTIONAL (@IsOptional overrides no ?)
+  
+  normalField: string     // ✅ REQUIRED (no ? operator)
+  normalOptional?: string // ❌ OPTIONAL (has ? operator)
+}
+
+// Generated schema:
+// "required": ["requiredField", "normalField"]
+```
+
+### Array Properties
+
+Array properties follow the same rules, with additional decorators:
+
+```typescript
+import { ArrayNotEmpty } from 'class-validator'
+
+class User {
+  tags: string[]           // ✅ REQUIRED (no ? operator)
+  
+  @ArrayNotEmpty()
+  categories?: string[]    // ✅ REQUIRED (@ArrayNotEmpty overrides ?)
+  
+  optionalTags?: string[]  // ❌ OPTIONAL (has ? operator)
+}
+
+// Generated schema:
+// "required": ["tags", "categories"]
+```
+
+### Summary of Rules
+
+1. **No `?` operator** → Property is **REQUIRED**
+2. **Has `?` operator** → Property is **OPTIONAL**
+3. **`@IsNotEmpty()` or `@ArrayNotEmpty()`** → Forces **REQUIRED** (overrides `?`)
+4. **`@IsOptional()`** → Forces **OPTIONAL** (overrides no `?`)
 
 ## 🌟 Advanced Features
 
