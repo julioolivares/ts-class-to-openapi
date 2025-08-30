@@ -179,20 +179,53 @@ class SchemaTransformer {
 
   /**
    * Transforms a class by its name into an OpenAPI schema object.
+   * Now considers the context of the calling file to resolve ambiguous class names.
    *
    * @param className - The name of the class to transform
    * @param filePath - Optional path to the file containing the class
+   * @param contextFile - Optional context file for resolving class ambiguity
    * @returns Object containing the class name and its corresponding JSON schema
    * @throws {Error} When the specified class cannot be found
    * @private
    */
   private transformByName(
     className: string,
-    filePath?: string
+    filePath?: string,
+    contextFile?: string
   ): { name: string; schema: SchemaType } {
     const sourceFiles = this.getRelevantSourceFiles(className, filePath)
 
-    for (const sourceFile of sourceFiles) {
+    // If we have a context file, try to find the class in that file first
+    if (contextFile) {
+      const contextSourceFile = this.program.getSourceFile(contextFile)
+      if (contextSourceFile) {
+        const classNode = this.findClassByName(contextSourceFile, className)
+        if (classNode) {
+          const cacheKey = this.getCacheKey(
+            contextSourceFile.fileName,
+            className
+          )
+
+          // Check cache first
+          if (this.classCache.has(cacheKey)) {
+            return this.classCache.get(cacheKey)!
+          }
+
+          const result = this.transformClass(classNode, contextSourceFile)
+          this.classCache.set(cacheKey, result)
+          this.cleanupCache()
+          return result
+        }
+      }
+    }
+
+    // Fallback to searching all files, but prioritize files that are more likely to be relevant
+    const prioritizedFiles = this.prioritizeSourceFiles(
+      sourceFiles,
+      contextFile
+    )
+
+    for (const sourceFile of prioritizedFiles) {
       const classNode = this.findClassByName(sourceFile, className)
       if (classNode && sourceFile?.fileName) {
         const cacheKey = this.getCacheKey(sourceFile.fileName, className)
@@ -202,7 +235,7 @@ class SchemaTransformer {
           return this.classCache.get(cacheKey)!
         }
 
-        const result = this.transformClass(classNode)
+        const result = this.transformClass(classNode, sourceFile)
 
         // Cache using fileName:className as key for uniqueness
         this.classCache.set(cacheKey, result)
@@ -215,6 +248,51 @@ class SchemaTransformer {
     }
 
     throw new Error(`Class ${className} not found`)
+  }
+
+  /**
+   * Prioritizes source files based on context to resolve class name conflicts.
+   * Gives priority to files in the same directory or with similar names.
+   *
+   * @param sourceFiles - Array of source files to prioritize
+   * @param contextFile - Optional context file for prioritization
+   * @returns Prioritized array of source files
+   * @private
+   */
+  private prioritizeSourceFiles(
+    sourceFiles: ts.SourceFile[],
+    contextFile?: string
+  ): ts.SourceFile[] {
+    if (!contextFile) {
+      return sourceFiles
+    }
+
+    const contextDir = contextFile.substring(0, contextFile.lastIndexOf('/'))
+
+    return sourceFiles.sort((a, b) => {
+      const aDir = a.fileName.substring(0, a.fileName.lastIndexOf('/'))
+      const bDir = b.fileName.substring(0, b.fileName.lastIndexOf('/'))
+
+      // Prioritize files in the same directory as context
+      const aInSameDir = aDir === contextDir ? 1 : 0
+      const bInSameDir = bDir === contextDir ? 1 : 0
+
+      if (aInSameDir !== bInSameDir) {
+        return bInSameDir - aInSameDir // Higher priority first
+      }
+
+      // Prioritize non-test files over test files
+      const aIsTest =
+        a.fileName.includes('test') || a.fileName.includes('spec') ? 0 : 1
+      const bIsTest =
+        b.fileName.includes('test') || b.fileName.includes('spec') ? 0 : 1
+
+      if (aIsTest !== bIsTest) {
+        return bIsTest - aIsTest // Non-test files first
+      }
+
+      return 0
+    })
   }
 
   /**
@@ -351,16 +429,20 @@ class SchemaTransformer {
    * Transforms a TypeScript class declaration into a schema object.
    *
    * @param classNode - The TypeScript class declaration node
+   * @param sourceFile - The source file containing the class (for context)
    * @returns Object containing class name and generated schema
    * @private
    */
-  private transformClass(classNode: ts.ClassDeclaration): {
+  private transformClass(
+    classNode: ts.ClassDeclaration,
+    sourceFile?: ts.SourceFile
+  ): {
     name: string
     schema: SchemaType
   } {
     const className = classNode.name?.text || 'Unknown'
     const properties = this.extractProperties(classNode)
-    const schema = this.generateSchema(properties)
+    const schema = this.generateSchema(properties, sourceFile?.fileName)
 
     return { name: className, schema }
   }
@@ -415,6 +497,289 @@ class SchemaTransformer {
   }
 
   /**
+   * Resolves generic types by analyzing the type alias and its arguments.
+   * For example, User<Role> where User is a type alias will be resolved to its structure.
+   *
+   * @param typeNode - The TypeScript type reference node with generic arguments
+   * @returns String representation of the resolved type or schema
+   * @private
+   */
+  private resolveGenericType(typeNode: ts.TypeReferenceNode): string {
+    const typeName = (typeNode.typeName as ts.Identifier).text
+    const typeArguments = typeNode.typeArguments
+
+    if (!typeArguments || typeArguments.length === 0) {
+      return typeName
+    }
+
+    // Try to resolve the type using the TypeScript type checker
+    const type = this.checker.getTypeAtLocation(typeNode)
+    const resolvedType = this.checker.typeToString(type)
+
+    // If we can resolve it to a meaningful structure, use that
+    if (
+      resolvedType &&
+      resolvedType !== typeName &&
+      !resolvedType.includes('any')
+    ) {
+      // For type aliases like User<Role>, we want to create a synthetic type name
+      // that represents the resolved structure
+      const typeArgNames = typeArguments.map(arg => {
+        if (ts.isTypeReferenceNode(arg) && ts.isIdentifier(arg.typeName)) {
+          return arg.typeName.text
+        }
+        return this.getTypeNodeToString(arg)
+      })
+
+      return `${typeName}_${typeArgNames.join('_')}`
+    }
+
+    return typeName
+  }
+
+  /**
+   * Checks if a type string represents a resolved generic type.
+   *
+   * @param type - The type string to check
+   * @returns True if it's a resolved generic type
+   * @private
+   */
+  private isResolvedGenericType(type: string): boolean {
+    // Simple heuristic: resolved generic types contain underscores and
+    // the parts after underscore should be known types
+    const parts = type.split('_')
+    return (
+      parts.length > 1 &&
+      parts
+        .slice(1)
+        .every(part => this.isKnownType(part) || this.isPrimitiveType(part))
+    )
+  }
+
+  /**
+   * Checks if a type is a known class or interface.
+   *
+   * @param typeName - The type name to check
+   * @returns True if it's a known type
+   * @private
+   */
+  private isKnownType(typeName: string): boolean {
+    // First check if it's a primitive type to avoid unnecessary lookups
+    if (this.isPrimitiveType(typeName)) {
+      return true
+    }
+
+    try {
+      // Use a more conservative approach - check if we can find the class
+      // without actually transforming it to avoid side effects
+      const found = this.findClassInProject(typeName)
+      return found !== null
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * Finds a class by name in the project without transforming it.
+   *
+   * @param className - The class name to find
+   * @returns True if found, false otherwise
+   * @private
+   */
+  private findClassInProject(className: string): boolean {
+    const sourceFiles = this.program.getSourceFiles().filter(sf => {
+      if (sf.isDeclarationFile) return false
+      if (sf.fileName.includes('.d.ts')) return false
+      if (sf.fileName.includes('node_modules')) return false
+      return true
+    })
+
+    for (const sourceFile of sourceFiles) {
+      const found = this.findClassByName(sourceFile, className)
+      if (found) return true
+    }
+
+    return false
+  }
+
+  /**
+   * Checks if a type is a primitive type.
+   *
+   * @param typeName - The type name to check
+   * @returns True if it's a primitive type
+   * @private
+   */
+  private isPrimitiveType(typeName: string): boolean {
+    const lowerTypeName = typeName.toLowerCase()
+
+    // Check against all primitive types from constants
+    const primitiveTypes = [
+      constants.jsPrimitives.String.type.toLowerCase(),
+      constants.jsPrimitives.Number.type.toLowerCase(),
+      constants.jsPrimitives.Boolean.type.toLowerCase(),
+      constants.jsPrimitives.Date.type.toLowerCase(),
+      constants.jsPrimitives.Buffer.type.toLowerCase(),
+      constants.jsPrimitives.Uint8Array.type.toLowerCase(),
+      constants.jsPrimitives.File.type.toLowerCase(),
+      constants.jsPrimitives.UploadFile.type.toLowerCase(),
+      constants.jsPrimitives.BigInt.type.toLowerCase(),
+    ]
+
+    return primitiveTypes.includes(lowerTypeName)
+  }
+
+  /**
+   * Resolves a generic type schema by analyzing the type alias structure.
+   *
+   * @param resolvedTypeName - The resolved generic type name (e.g., User_Role)
+   * @returns OpenAPI schema for the resolved generic type
+   * @private
+   */
+  private resolveGenericTypeSchema(
+    resolvedTypeName: string
+  ): SchemaType | null {
+    const parts = resolvedTypeName.split('_')
+    const baseTypeName = parts[0]
+    const typeArgNames = parts.slice(1)
+
+    if (!baseTypeName) {
+      return null
+    }
+
+    // Find the original type alias declaration
+    const typeAliasSymbol = this.findTypeAliasDeclaration(baseTypeName)
+    if (!typeAliasSymbol) {
+      return null
+    }
+
+    // Create a schema based on the type alias structure, substituting type parameters
+    return this.createSchemaFromTypeAlias(typeAliasSymbol, typeArgNames)
+  }
+
+  /**
+   * Finds a type alias declaration by name.
+   *
+   * @param typeName - The type alias name to find
+   * @returns The type alias declaration node or null
+   * @private
+   */
+  private findTypeAliasDeclaration(
+    typeName: string
+  ): ts.TypeAliasDeclaration | null {
+    for (const sourceFile of this.program.getSourceFiles()) {
+      if (sourceFile.isDeclarationFile) continue
+
+      const findTypeAlias = (node: ts.Node): ts.TypeAliasDeclaration | null => {
+        if (ts.isTypeAliasDeclaration(node) && node.name.text === typeName) {
+          return node
+        }
+        return ts.forEachChild(node, findTypeAlias) || null
+      }
+
+      const result = findTypeAlias(sourceFile)
+      if (result) return result
+    }
+    return null
+  }
+
+  /**
+   * Creates a schema from a type alias declaration, substituting type parameters.
+   *
+   * @param typeAlias - The type alias declaration
+   * @param typeArgNames - The concrete type arguments
+   * @returns OpenAPI schema for the type alias
+   * @private
+   */
+  private createSchemaFromTypeAlias(
+    typeAlias: ts.TypeAliasDeclaration,
+    typeArgNames: string[]
+  ): SchemaType | null {
+    const typeNode = typeAlias.type
+
+    if (ts.isTypeLiteralNode(typeNode)) {
+      const schema: SchemaType = {
+        type: 'object',
+        properties: {},
+        required: [],
+      }
+
+      for (const member of typeNode.members) {
+        if (
+          ts.isPropertySignature(member) &&
+          member.name &&
+          ts.isIdentifier(member.name)
+        ) {
+          const propertyName = member.name.text
+          const isOptional = !!member.questionToken
+
+          if (member.type) {
+            const propertyType = this.resolveTypeParameterInTypeAlias(
+              member.type,
+              typeAlias.typeParameters,
+              typeArgNames
+            )
+
+            const { type, format, nestedSchema } =
+              this.mapTypeToSchema(propertyType)
+
+            if (nestedSchema) {
+              schema.properties[propertyName] = nestedSchema
+            } else {
+              schema.properties[propertyName] = { type }
+              if (format) schema.properties[propertyName].format = format
+            }
+
+            if (!isOptional) {
+              schema.required.push(propertyName)
+            }
+          }
+        }
+      }
+
+      return schema
+    }
+
+    return null
+  }
+
+  /**
+   * Resolves type parameters in a type alias to concrete types.
+   *
+   * @param typeNode - The type node to resolve
+   * @param typeParameters - The type parameters of the type alias
+   * @param typeArgNames - The concrete type arguments
+   * @returns The resolved type string
+   * @private
+   */
+  private resolveTypeParameterInTypeAlias(
+    typeNode: ts.TypeNode,
+    typeParameters: ts.NodeArray<ts.TypeParameterDeclaration> | undefined,
+    typeArgNames: string[]
+  ): string {
+    if (
+      ts.isTypeReferenceNode(typeNode) &&
+      ts.isIdentifier(typeNode.typeName)
+    ) {
+      const typeName = typeNode.typeName.text
+
+      // Check if this is a type parameter
+      if (typeParameters) {
+        const paramIndex = typeParameters.findIndex(
+          param => param.name.text === typeName
+        )
+        if (paramIndex !== -1 && paramIndex < typeArgNames.length) {
+          const resolvedType = typeArgNames[paramIndex]
+          return resolvedType || typeName
+        }
+      }
+
+      return typeName
+    }
+
+    return this.getTypeNodeToString(typeNode)
+  }
+
+  /**
    * Converts a TypeScript type node to its string representation.
    *
    * @param typeNode - The TypeScript type node to convert
@@ -444,6 +809,8 @@ class SchemaTransformer {
             return firstTypeArg.typeName.text
           }
         }
+
+        return this.resolveGenericType(typeNode)
       }
 
       return typeNode.typeName.text
@@ -550,10 +917,14 @@ class SchemaTransformer {
    * Generates an OpenAPI schema from extracted property information.
    *
    * @param properties - Array of property information to process
+   * @param contextFile - Optional context file path for resolving class references
    * @returns Complete OpenAPI schema object with properties and validation rules
    * @private
    */
-  private generateSchema(properties: PropertyInfo[]): SchemaType {
+  private generateSchema(
+    properties: PropertyInfo[],
+    contextFile?: string
+  ): SchemaType {
     const schema: SchemaType = {
       type: 'object',
       properties: {},
@@ -561,7 +932,10 @@ class SchemaTransformer {
     }
 
     for (const property of properties) {
-      const { type, format, nestedSchema } = this.mapTypeToSchema(property.type)
+      const { type, format, nestedSchema } = this.mapTypeToSchema(
+        property.type,
+        contextFile
+      )
 
       if (nestedSchema) {
         schema.properties[property.name] = nestedSchema
@@ -590,10 +964,14 @@ class SchemaTransformer {
    * Handles primitive types, arrays, and nested objects recursively.
    *
    * @param type - The TypeScript type string to map
+   * @param contextFile - Optional context file path for resolving class references
    * @returns Object containing OpenAPI type, optional format, and nested schema
    * @private
    */
-  private mapTypeToSchema(type: string): {
+  private mapTypeToSchema(
+    type: string,
+    contextFile?: string
+  ): {
     type: string
     format?: string
     nestedSchema?: SchemaType
@@ -601,7 +979,7 @@ class SchemaTransformer {
     // Handle arrays
     if (type.endsWith('[]')) {
       const elementType = type.slice(0, -2)
-      const elementSchema = this.mapTypeToSchema(elementType)
+      const elementSchema = this.mapTypeToSchema(elementType, contextFile)
       const items: any = elementSchema.nestedSchema || {
         type: elementSchema.type,
       }
@@ -646,9 +1024,28 @@ class SchemaTransformer {
           format: constants.jsPrimitives.UploadFile.format,
         }
       default:
+        // Check if it's a resolved generic type (e.g., User_Role)
+        if (type.includes('_') && this.isResolvedGenericType(type)) {
+          try {
+            const genericSchema = this.resolveGenericTypeSchema(type)
+            if (genericSchema) {
+              return {
+                type: constants.jsPrimitives.Object.value,
+                nestedSchema: genericSchema,
+              }
+            }
+          } catch (error) {
+            console.warn(`Failed to resolve generic type ${type}:`, error)
+          }
+        }
+
         // Handle nested objects
         try {
-          const nestedResult = this.transformByName(type)
+          const nestedResult = this.transformByName(
+            type,
+            undefined,
+            contextFile
+          )
           return {
             type: constants.jsPrimitives.Object.value,
             nestedSchema: nestedResult.schema,
