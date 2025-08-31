@@ -155,24 +155,22 @@ class SchemaTransformer {
   }
 
   /**
-   * Gets relevant source files for a class, filtering out unnecessary files to save memory.
+   * Transforms a class by its name into an OpenAPI schema object.
+   * Considers the context of the calling file to resolve ambiguous class names.
+   * Includes circular reference detection to prevent infinite recursion.
    *
-   * @param className - The name of the class to find files for
-   * @param filePath - Optional specific file path
-   * @returns Array of relevant source files
+   * @param className - The name of the class to transform
+   * @param contextFilePath - Optional path to context file for resolving class ambiguity
+   * @returns Object containing the class name and its corresponding JSON schema
+   * @throws {Error} When the specified class cannot be found
    * @private
    */
-  private getRelevantSourceFiles(
+  private transformByName(
     className: string,
-    filePath?: string
-  ): ts.SourceFile[] {
-    if (filePath) {
-      const sourceFile = this.program.getSourceFile(filePath)
-      return sourceFile ? [sourceFile] : []
-    }
-
-    // Only get source files that are not declaration files and not in node_modules
-    return this.program.getSourceFiles().filter(sf => {
+    contextFilePath?: string
+  ): { name: string; schema: SchemaType } {
+    // Get all relevant source files (not declaration files and not in node_modules)
+    const sourceFiles = this.program.getSourceFiles().filter(sf => {
       if (sf.isDeclarationFile) return false
       if (sf.fileName.includes('.d.ts')) return false
       if (sf.fileName.includes('node_modules')) return false
@@ -182,30 +180,10 @@ class SchemaTransformer {
 
       return true
     })
-  }
-
-  /**
-   * Transforms a class by its name into an OpenAPI schema object.
-   * Now considers the context of the calling file to resolve ambiguous class names.
-   * Includes circular reference detection to prevent infinite recursion.
-   *
-   * @param className - The name of the class to transform
-   * @param filePath - Optional path to the file containing the class
-   * @param contextFile - Optional context file for resolving class ambiguity
-   * @returns Object containing the class name and its corresponding JSON schema
-   * @throws {Error} When the specified class cannot be found
-   * @private
-   */
-  private transformByName(
-    className: string,
-    filePath?: string,
-    contextFile?: string
-  ): { name: string; schema: SchemaType } {
-    const sourceFiles = this.getRelevantSourceFiles(className, filePath)
 
     // If we have a context file, try to find the class in that file first
-    if (contextFile) {
-      const contextSourceFile = this.program.getSourceFile(contextFile)
+    if (contextFilePath) {
+      const contextSourceFile = this.program.getSourceFile(contextFilePath)
       if (contextSourceFile) {
         const classNode = this.findClassByName(contextSourceFile, className)
         if (classNode) {
@@ -228,14 +206,14 @@ class SchemaTransformer {
                 type: 'object',
                 properties: {},
                 required: [],
-                description: `Reference to ${className} (circular reference detected)`
-              }
+                description: `Reference to ${className} (circular reference detected)`,
+              },
             }
           }
 
           // Mark this class as being processed
           this.processingClasses.add(cacheKey)
-          
+
           try {
             const result = this.transformClass(classNode, contextSourceFile)
             this.classCache.set(cacheKey, result)
@@ -252,7 +230,7 @@ class SchemaTransformer {
     // Fallback to searching all files, but prioritize files that are more likely to be relevant
     const prioritizedFiles = this.prioritizeSourceFiles(
       sourceFiles,
-      contextFile
+      contextFilePath
     )
 
     for (const sourceFile of prioritizedFiles) {
@@ -274,14 +252,14 @@ class SchemaTransformer {
               type: 'object',
               properties: {},
               required: [],
-              description: `Reference to ${className} (circular reference detected)`
-            }
+              description: `Reference to ${className} (circular reference detected)`,
+            },
           }
         }
 
         // Mark this class as being processed
         this.processingClasses.add(cacheKey)
-        
+
         try {
           const result = this.transformClass(classNode, sourceFile)
 
@@ -307,19 +285,22 @@ class SchemaTransformer {
    * Gives priority to files in the same directory or with similar names.
    *
    * @param sourceFiles - Array of source files to prioritize
-   * @param contextFile - Optional context file for prioritization
+   * @param contextFilePath - Optional path to context file for prioritization
    * @returns Prioritized array of source files
    * @private
    */
   private prioritizeSourceFiles(
     sourceFiles: ts.SourceFile[],
-    contextFile?: string
+    contextFilePath?: string
   ): ts.SourceFile[] {
-    if (!contextFile) {
+    if (!contextFilePath) {
       return sourceFiles
     }
 
-    const contextDir = contextFile.substring(0, contextFile.lastIndexOf('/'))
+    const contextDir = contextFilePath.substring(
+      0,
+      contextFilePath.lastIndexOf('/')
+    )
 
     return sourceFiles.sort((a, b) => {
       const aDir = a.fileName.substring(0, a.fileName.lastIndexOf('/'))
@@ -969,13 +950,13 @@ class SchemaTransformer {
    * Generates an OpenAPI schema from extracted property information.
    *
    * @param properties - Array of property information to process
-   * @param contextFile - Optional context file path for resolving class references
+   * @param contextFilePath - Optional context file path for resolving class references
    * @returns Complete OpenAPI schema object with properties and validation rules
    * @private
    */
   private generateSchema(
     properties: PropertyInfo[],
-    contextFile?: string
+    contextFilePath?: string
   ): SchemaType {
     const schema: SchemaType = {
       type: 'object',
@@ -986,7 +967,7 @@ class SchemaTransformer {
     for (const property of properties) {
       const { type, format, nestedSchema } = this.mapTypeToSchema(
         property.type,
-        contextFile
+        contextFilePath
       )
 
       if (nestedSchema) {
@@ -1016,13 +997,13 @@ class SchemaTransformer {
    * Handles primitive types, arrays, and nested objects recursively.
    *
    * @param type - The TypeScript type string to map
-   * @param contextFile - Optional context file path for resolving class references
+   * @param contextFilePath - Optional context file path for resolving class references
    * @returns Object containing OpenAPI type, optional format, and nested schema
    * @private
    */
   private mapTypeToSchema(
     type: string,
-    contextFile?: string
+    contextFilePath?: string
   ): {
     type: string
     format?: string
@@ -1031,7 +1012,7 @@ class SchemaTransformer {
     // Handle arrays
     if (type.endsWith('[]')) {
       const elementType = type.slice(0, -2)
-      const elementSchema = this.mapTypeToSchema(elementType, contextFile)
+      const elementSchema = this.mapTypeToSchema(elementType, contextFilePath)
       const items: any = elementSchema.nestedSchema || {
         type: elementSchema.type,
       }
@@ -1093,11 +1074,7 @@ class SchemaTransformer {
 
         // Handle nested objects
         try {
-          const nestedResult = this.transformByName(
-            type,
-            undefined,
-            contextFile
-          )
+          const nestedResult = this.transformByName(type, contextFilePath)
           return {
             type: constants.jsPrimitives.Object.value,
             nestedSchema: nestedResult.schema,
