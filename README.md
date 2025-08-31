@@ -793,7 +793,16 @@ const schema = transform(User)
         "format": "binary"
       }
     },
-    "required": ["id", "name", "email", "tags", "createdAt", "role", "files", "avatar"]
+    "required": [
+      "id",
+      "name",
+      "email",
+      "tags",
+      "createdAt",
+      "role",
+      "files",
+      "avatar"
+    ]
   }
 }
 ```
@@ -802,19 +811,19 @@ const schema = transform(User)
 
 ## 📊 Pure TypeScript vs Enhanced Mode Comparison
 
-| Feature                | Pure TypeScript                       | Enhanced (class-validator)           |
-| ---------------------- | ------------------------------------- | ------------------------------------ |
-| **Dependencies**       | Zero                                  | Requires `class-validator`           |
-| **Configuration**      | None                                  | `experimentalDecorators: true`       |
-| **Type Detection**     | Automatic                             | Automatic + Decorators               |
-| **Validation Rules**   | Basic types only                      | Rich validation constraints          |
+| Feature                | Pure TypeScript                             | Enhanced (class-validator)                |
+| ---------------------- | ------------------------------------------- | ----------------------------------------- |
+| **Dependencies**       | Zero                                        | Requires `class-validator`                |
+| **Configuration**      | None                                        | `experimentalDecorators: true`            |
+| **Type Detection**     | Automatic                                   | Automatic + Decorators                    |
+| **Validation Rules**   | Basic types only                            | Rich validation constraints               |
 | **Required Fields**    | Based on TypeScript optional operator (`?`) | TypeScript optional operator + decorators |
-| **String Constraints** | None                                  | Min/max length, patterns             |
-| **Number Constraints** | None                                  | Min/max values, positive             |
-| **Array Constraints**  | None                                  | Min/max items, non-empty             |
-| **Email Validation**   | None                                  | Email format validation              |
-| **Date Handling**      | `date-time` format                    | `date-time` format                   |
-| **Use Case**           | Existing codebases, rapid prototyping | APIs with validation, robust schemas |
+| **String Constraints** | None                                        | Min/max length, patterns                  |
+| **Number Constraints** | None                                        | Min/max values, positive                  |
+| **Array Constraints**  | None                                        | Min/max items, non-empty                  |
+| **Email Validation**   | None                                        | Email format validation                   |
+| **Date Handling**      | `date-time` format                          | `date-time` format                        |
+| **Use Case**           | Existing codebases, rapid prototyping       | APIs with validation, robust schemas      |
 
 ### Example Comparison
 
@@ -822,9 +831,9 @@ const schema = transform(User)
 
 ```typescript
 class User {
-  name: string    // Required (no ? operator)
-  email: string   // Required (no ? operator)  
-  age: number     // Required (no ? operator)
+  name: string // Required (no ? operator)
+  email: string // Required (no ? operator)
+  age: number // Required (no ? operator)
 }
 // Generates: All properties required (no ? operator), basic types
 ```
@@ -1139,10 +1148,10 @@ The presence or absence of the TypeScript optional operator (`?`) determines if 
 
 ```typescript
 class User {
-  name: string    // ✅ REQUIRED (no ? operator)
-  email: string   // ✅ REQUIRED (no ? operator)
-  age?: number    // ❌ OPTIONAL (has ? operator)
-  bio?: string    // ❌ OPTIONAL (has ? operator)
+  name: string // ✅ REQUIRED (no ? operator)
+  email: string // ✅ REQUIRED (no ? operator)
+  age?: number // ❌ OPTIONAL (has ? operator)
+  bio?: string // ❌ OPTIONAL (has ? operator)
 }
 
 // Generated schema:
@@ -1158,12 +1167,12 @@ import { IsNotEmpty, IsOptional } from 'class-validator'
 
 class User {
   @IsNotEmpty()
-  requiredField?: string  // ✅ REQUIRED (@IsNotEmpty overrides ?)
-  
+  requiredField?: string // ✅ REQUIRED (@IsNotEmpty overrides ?)
+
   @IsOptional()
-  optionalField: string   // ❌ OPTIONAL (@IsOptional overrides no ?)
-  
-  normalField: string     // ✅ REQUIRED (no ? operator)
+  optionalField: string // ❌ OPTIONAL (@IsOptional overrides no ?)
+
+  normalField: string // ✅ REQUIRED (no ? operator)
   normalOptional?: string // ❌ OPTIONAL (has ? operator)
 }
 
@@ -1179,12 +1188,12 @@ Array properties follow the same rules, with additional decorators:
 import { ArrayNotEmpty } from 'class-validator'
 
 class User {
-  tags: string[]           // ✅ REQUIRED (no ? operator)
-  
+  tags: string[] // ✅ REQUIRED (no ? operator)
+
   @ArrayNotEmpty()
-  categories?: string[]    // ✅ REQUIRED (@ArrayNotEmpty overrides ?)
-  
-  optionalTags?: string[]  // ❌ OPTIONAL (has ? operator)
+  categories?: string[] // ✅ REQUIRED (@ArrayNotEmpty overrides ?)
+
+  optionalTags?: string[] // ❌ OPTIONAL (has ? operator)
 }
 
 // Generated schema:

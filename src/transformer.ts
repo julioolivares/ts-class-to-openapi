@@ -75,6 +75,13 @@ class SchemaTransformer {
   private loadedFiles = new Set<string>()
 
   /**
+   * Set of class names currently being processed to prevent circular references
+   * Key format: "fileName:className" for uniqueness across different files
+   * @private
+   */
+  private processingClasses = new Set<string>()
+
+  /**
    * Private constructor for singleton pattern.
    *
    * @param tsConfigPath - Optional path to a specific TypeScript config file
@@ -180,6 +187,7 @@ class SchemaTransformer {
   /**
    * Transforms a class by its name into an OpenAPI schema object.
    * Now considers the context of the calling file to resolve ambiguous class names.
+   * Includes circular reference detection to prevent infinite recursion.
    *
    * @param className - The name of the class to transform
    * @param filePath - Optional path to the file containing the class
@@ -211,10 +219,32 @@ class SchemaTransformer {
             return this.classCache.get(cacheKey)!
           }
 
-          const result = this.transformClass(classNode, contextSourceFile)
-          this.classCache.set(cacheKey, result)
-          this.cleanupCache()
-          return result
+          // Check for circular reference before processing
+          if (this.processingClasses.has(cacheKey)) {
+            // Return a simple object reference to break circular dependency
+            return {
+              name: className,
+              schema: {
+                type: 'object',
+                properties: {},
+                required: [],
+                description: `Reference to ${className} (circular reference detected)`
+              }
+            }
+          }
+
+          // Mark this class as being processed
+          this.processingClasses.add(cacheKey)
+          
+          try {
+            const result = this.transformClass(classNode, contextSourceFile)
+            this.classCache.set(cacheKey, result)
+            this.cleanupCache()
+            return result
+          } finally {
+            // Always remove from processing set when done
+            this.processingClasses.delete(cacheKey)
+          }
         }
       }
     }
@@ -235,15 +265,37 @@ class SchemaTransformer {
           return this.classCache.get(cacheKey)!
         }
 
-        const result = this.transformClass(classNode, sourceFile)
+        // Check for circular reference before processing
+        if (this.processingClasses.has(cacheKey)) {
+          // Return a simple object reference to break circular dependency
+          return {
+            name: className,
+            schema: {
+              type: 'object',
+              properties: {},
+              required: [],
+              description: `Reference to ${className} (circular reference detected)`
+            }
+          }
+        }
 
-        // Cache using fileName:className as key for uniqueness
-        this.classCache.set(cacheKey, result)
+        // Mark this class as being processed
+        this.processingClasses.add(cacheKey)
+        
+        try {
+          const result = this.transformClass(classNode, sourceFile)
 
-        // Clean up cache if it gets too large
-        this.cleanupCache()
+          // Cache using fileName:className as key for uniqueness
+          this.classCache.set(cacheKey, result)
 
-        return result
+          // Clean up cache if it gets too large
+          this.cleanupCache()
+
+          return result
+        } finally {
+          // Always remove from processing set when done
+          this.processingClasses.delete(cacheKey)
+        }
       }
     }
 
