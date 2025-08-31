@@ -67,7 +67,7 @@ if (isTest) {
         file: 'dist/run.js',
         format: 'cjs',
         inlineDynamicImports: true,
-        sourcemap: isDev,
+        sourcemap: 'inline',
       },
       plugins: plugins.commonJs,
       external,
