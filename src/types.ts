@@ -1,7 +1,13 @@
 type Property = { [key: string]: any } & { type: string }
-type SchemaType = { [key: string]: any } & {
-  properties: { [key: string]: any }
-} & { required: string[] } & { type: string }
+
+// Support for both regular schemas and $ref schemas (OpenAPI 3.1)
+type SchemaType =
+  | ({ [key: string]: any } & {
+      properties: { [key: string]: any }
+    } & { required: string[] } & { type: string })
+  | ({ [key: string]: any } & {
+      $ref: string
+    })
 
 /**
  * Information about a class-validator decorator found on a property.

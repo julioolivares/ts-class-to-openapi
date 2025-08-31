@@ -199,13 +199,11 @@ class SchemaTransformer {
 
           // Check for circular reference before processing
           if (this.processingClasses.has(cacheKey)) {
-            // Return a simple object reference to break circular dependency
+            // Return a $ref reference to break circular dependency (OpenAPI 3.1 style)
             return {
               name: className,
               schema: {
-                type: 'object',
-                properties: {},
-                required: [],
+                $ref: `#/components/schemas/${className}`,
                 description: `Reference to ${className} (circular reference detected)`,
               },
             }
@@ -245,13 +243,11 @@ class SchemaTransformer {
 
         // Check for circular reference before processing
         if (this.processingClasses.has(cacheKey)) {
-          // Return a simple object reference to break circular dependency
+          // Return a $ref reference to break circular dependency (OpenAPI 3.1 style)
           return {
             name: className,
             schema: {
-              type: 'object',
-              properties: {},
-              required: [],
+              $ref: `#/components/schemas/${className}`,
               description: `Reference to ${className} (circular reference detected)`,
             },
           }
@@ -972,6 +968,11 @@ class SchemaTransformer {
 
       if (nestedSchema) {
         schema.properties[property.name] = nestedSchema
+
+        // Skip decorator application for $ref schemas
+        if (this.isRefSchema(nestedSchema)) {
+          continue
+        }
       } else {
         schema.properties[property.name] = { type }
         if (format) schema.properties[property.name].format = format
@@ -1075,6 +1076,15 @@ class SchemaTransformer {
         // Handle nested objects
         try {
           const nestedResult = this.transformByName(type, contextFilePath)
+
+          // Check if it's a $ref schema (circular reference)
+          if (nestedResult.schema.$ref) {
+            return {
+              type: constants.jsPrimitives.Object.value,
+              nestedSchema: nestedResult.schema,
+            }
+          }
+
           return {
             type: constants.jsPrimitives.Object.value,
             nestedSchema: nestedResult.schema,
@@ -1083,6 +1093,17 @@ class SchemaTransformer {
           return { type: constants.jsPrimitives.Object.value }
         }
     }
+  }
+
+  /**
+   * Checks if a schema is a $ref schema (circular reference).
+   *
+   * @param schema - The schema to check
+   * @returns True if it's a $ref schema
+   * @private
+   */
+  private isRefSchema(schema: SchemaType): schema is { $ref: string } {
+    return '$ref' in schema
   }
 
   /**
@@ -1099,6 +1120,11 @@ class SchemaTransformer {
     schema: SchemaType,
     propertyName: string
   ): void {
+    // Skip applying decorators to $ref schemas
+    if (this.isRefSchema(schema)) {
+      return
+    }
+
     const isArrayType =
       schema.properties[propertyName].type ===
       constants.jsPrimitives.Array.value
@@ -1442,6 +1468,11 @@ class SchemaTransformer {
     property: PropertyInfo,
     schema: SchemaType
   ): void {
+    // Skip applying type-based formats to $ref schemas
+    if (this.isRefSchema(schema)) {
+      return
+    }
+
     const propertyName = property.name
     const propertyType = property.type.toLowerCase()
 
@@ -1482,6 +1513,11 @@ class SchemaTransformer {
     property: PropertyInfo,
     schema: SchemaType
   ): void {
+    // Skip determining required status for $ref schemas
+    if (this.isRefSchema(schema)) {
+      return
+    }
+
     const propertyName = property.name
 
     // Check if already marked as required by IsNotEmpty or ArrayNotEmpty decorator

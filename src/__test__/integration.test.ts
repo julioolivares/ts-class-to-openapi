@@ -192,9 +192,21 @@ describe('Transform Function Integration Tests', () => {
 
     assert.strictEqual(result.name, 'BrokenEntity')
 
-    // Circular reference should be handled
+    // Circular reference should be handled with $ref or object type
     assert.ok(result.schema.properties.parent, 'Should have parent property')
-    assert.strictEqual(result.schema.properties.parent.type, 'object')
+    const parentProperty = result.schema.properties.parent
+    if (parentProperty.$ref) {
+      assert.ok(
+        parentProperty.$ref.includes('BrokenEntity'),
+        '$ref should reference BrokenEntity'
+      )
+    } else {
+      assert.strictEqual(
+        parentProperty.type,
+        'object',
+        'Parent should be object type if not using $ref'
+      )
+    }
 
     // Array without specific item type
     assert.strictEqual(result.schema.properties.items.type, 'array')
