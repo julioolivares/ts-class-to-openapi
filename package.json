@@ -1,6 +1,6 @@
 {
   "name": "ts-class-to-openapi",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Transform TypeScript classes into OpenAPI 3.1.0 schema objects, which support class-validator decorators",
   "main": "./dist/index.js",
   "module": "./dist/index.esm.js",
