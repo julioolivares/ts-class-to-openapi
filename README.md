@@ -8,7 +8,6 @@ A powerful library that automatically converts your TypeScript classes into Open
 >
 > - **Pure TypeScript classes** without requiring any decorators or external dependencies!
 > - **Full enum support** with `@IsEnum` decorator for string, numeric, and object enums
-> - Perfect for transforming existing codebases instantly.
 
 ## 🚀 Key Features
 
