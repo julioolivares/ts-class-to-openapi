@@ -5,17 +5,8 @@ import {
   type SchemaType,
   type DecoratorInfo,
   type PropertyInfo,
+  type TransformerOptions,
 } from './types.js'
-
-/**
- * Configuration options for SchemaTransformer memory management
- */
-interface TransformerOptions {
-  /** Maximum number of schemas to cache before cleanup (default: 100) */
-  maxCacheSize?: number
-  /** Whether to automatically clean up cache (default: true) */
-  autoCleanup?: boolean
-}
 
 /**
  * Transforms class-validator decorated classes into OpenAPI schema objects.
@@ -36,7 +27,7 @@ class SchemaTransformer {
    * Singleton instance
    * @private
    */
-  private static instance: SchemaTransformer | null = null
+  private static instance: SchemaTransformer | null | undefined = null
   /**
    * TypeScript program instance for analyzing source files.
    * @private
@@ -350,19 +341,103 @@ class SchemaTransformer {
   /**
    * Clears the current singleton instance. Useful for testing or when you need
    * to create a new instance with different configuration.
+   * @private
    */
-  public static clearInstance(): void {
-    SchemaTransformer.instance = null
+  private static clearInstance(): void {
+    SchemaTransformer.instance = undefined
+  }
+
+  /**
+   * Flag to prevent recursive disposal calls
+   * @private
+   */
+  private static disposingInProgress = false
+
+  /**
+   * Completely disposes of the current singleton instance and releases all resources.
+   * This is a static method that can be called without having an instance reference.
+   * Ensures complete memory cleanup regardless of the current state.
+   *
+   * @example
+   * ```typescript
+   * SchemaTransformer.disposeInstance();
+   * // All resources released, next getInstance() will create fresh instance
+   * ```
+   *
+   * @public
+   */
+  public static disposeInstance(): void {
+    // Prevent recursive disposal calls
+    if (SchemaTransformer.disposingInProgress) {
+      return
+    }
+
+    SchemaTransformer.disposingInProgress = true
+
+    try {
+      if (SchemaTransformer.instance) {
+        SchemaTransformer.instance.dispose()
+      }
+    } catch (error) {
+      // Log any disposal errors but continue with cleanup
+      console.warn('Warning during static disposal:', error)
+    } finally {
+      // Always ensure the static instance is cleared
+      SchemaTransformer.instance = undefined
+      SchemaTransformer.disposingInProgress = false
+
+      // Force garbage collection for cleanup
+      if (global.gc) {
+        global.gc()
+      }
+    }
+  }
+
+  /**
+   * @deprecated Use disposeInstance() instead for better clarity
+   * @private
+   */
+  private static dispose(): void {
+    SchemaTransformer.disposeInstance()
   }
 
   public static getInstance(
     tsConfigPath?: string,
     options?: TransformerOptions
   ): SchemaTransformer {
-    if (!SchemaTransformer.instance) {
+    if (!SchemaTransformer.instance || SchemaTransformer.isInstanceDisposed()) {
       SchemaTransformer.instance = new SchemaTransformer(tsConfigPath, options)
     }
     return SchemaTransformer.instance
+  }
+
+  /**
+   * Internal method to check if current instance is disposed
+   * @private
+   */
+  private static isInstanceDisposed(): boolean {
+    return SchemaTransformer.instance
+      ? SchemaTransformer.instance.isDisposed()
+      : true
+  }
+
+  /**
+   * Transforms a class using the singleton instance
+   * @param cls - The class constructor function to transform
+   * @param options - Optional configuration for memory management (only used if no instance exists)
+   * @returns Object containing the class name and its corresponding JSON schema
+   * @public
+   */
+  public static transformClass<T>(
+    cls: new (...args: any[]) => T,
+    options?: TransformerOptions
+  ): {
+    name: string
+    schema: SchemaType
+  } {
+    // Use the singleton instance instead of creating a temporary one
+    const transformer = SchemaTransformer.getInstance(undefined, options)
+    return transformer.transform(cls)
   }
 
   /**
@@ -400,6 +475,7 @@ class SchemaTransformer {
   public clearCache(): void {
     this.classCache.clear()
     this.loadedFiles.clear()
+    this.processingClasses.clear()
 
     // Force garbage collection hint if available
     if (global.gc) {
@@ -408,24 +484,158 @@ class SchemaTransformer {
   }
 
   /**
+   * Completely disposes of the transformer instance and releases all resources.
+   * This includes clearing all caches, releasing TypeScript program resources,
+   * and resetting the singleton instance.
+   *
+   * After calling this method, you need to call getInstance() again to get a new instance.
+   *
+   * @example
+   * ```typescript
+   * const transformer = SchemaTransformer.getInstance();
+   * // ... use transformer
+   * transformer.dispose();
+   * // transformer is now unusable, need to get new instance
+   * const newTransformer = SchemaTransformer.getInstance();
+   * ```
+   *
+   * @private
+   */
+  private dispose(): void {
+    try {
+      // Clear all caches and sets completely
+      this.classCache.clear()
+      this.loadedFiles.clear()
+      this.processingClasses.clear()
+
+      // Release TypeScript program resources
+      // While TypeScript doesn't provide explicit disposal methods,
+      // we can help garbage collection by clearing all references
+
+      // Clear all references to TypeScript objects
+      // @ts-ignore - We're intentionally setting these to null for cleanup
+      this.program = null
+      // @ts-ignore - We're intentionally setting these to null for cleanup
+      this.checker = null
+    } catch (error) {
+      // If there's any error during disposal, log it but continue
+      console.warn('Warning during transformer disposal:', error)
+    } finally {
+      // Force garbage collection for cleanup
+      if (global.gc) {
+        global.gc()
+      }
+    }
+  }
+
+  /**
+   * Completely resets the transformer by disposing current instance and creating a new one.
+   * This is useful when you need a fresh start with different TypeScript configuration
+   * or want to ensure all resources are properly released and recreated.
+   *
+   * @param tsConfigPath - Optional path to a specific TypeScript config file for the new instance
+   * @param options - Configuration options for memory management for the new instance
+   * @returns A fresh SchemaTransformer instance
+   *
+   * @example
+   * ```typescript
+   * const transformer = SchemaTransformer.getInstance();
+   * // ... use transformer
+   * const freshTransformer = transformer.reset('./new-tsconfig.json');
+   * ```
+   *
+   * @private
+   */
+  private reset(
+    tsConfigPath?: string,
+    options?: TransformerOptions
+  ): SchemaTransformer {
+    // Dispose current instance using static method to properly clear instance reference
+    SchemaTransformer.disposeInstance()
+
+    // Create and return new instance
+    return SchemaTransformer.getInstance(tsConfigPath, options)
+  }
+
+  /**
    * Gets memory usage statistics for monitoring and debugging.
    *
-   * @returns Object containing cache size and loaded files count
+   * @returns Object containing cache size, loaded files count, and processing status
    *
    * @example
    * ```typescript
    * const transformer = SchemaTransformer.getInstance();
    * const stats = transformer.getMemoryStats();
    * console.log(`Cache entries: ${stats.cacheSize}, Files loaded: ${stats.loadedFiles}`);
+   * console.log(`Currently processing: ${stats.currentlyProcessing} classes`);
    * ```
    *
-   * @public
+   * @private
    */
-  public getMemoryStats(): { cacheSize: number; loadedFiles: number } {
+  private getMemoryStats(): {
+    cacheSize: number
+    loadedFiles: number
+    currentlyProcessing: number
+    maxCacheSize: number
+    autoCleanup: boolean
+    isDisposed: boolean
+  } {
     return {
-      cacheSize: this.classCache.size,
-      loadedFiles: this.loadedFiles.size,
+      cacheSize: this.classCache?.size || 0,
+      loadedFiles: this.loadedFiles?.size || 0,
+      currentlyProcessing: this.processingClasses?.size || 0,
+      maxCacheSize: this.maxCacheSize || 0,
+      autoCleanup: this.autoCleanup || false,
+      isDisposed: !this.program || !this.checker,
     }
+  }
+
+  /**
+   * Checks if the transformer instance has been disposed and is no longer usable.
+   *
+   * @returns True if the instance has been disposed
+   *
+   * @example
+   * ```typescript
+   * const transformer = SchemaTransformer.getInstance();
+   * transformer.dispose();
+   * console.log(transformer.isDisposed()); // true
+   * ```
+   *
+   * @private
+   */
+  private isDisposed(): boolean {
+    return (
+      !this.program ||
+      !this.checker ||
+      !this.classCache ||
+      !this.loadedFiles ||
+      !this.processingClasses
+    )
+  }
+
+  /**
+   * Static method to check if there's an active singleton instance.
+   *
+   * @returns True if there's an active instance, false if disposed or never created
+   *
+   * @example
+   * ```typescript
+   * console.log(SchemaTransformer.hasActiveInstance()); // false
+   * const transformer = SchemaTransformer.getInstance();
+   * console.log(SchemaTransformer.hasActiveInstance()); // true
+   * SchemaTransformer.dispose();
+   * console.log(SchemaTransformer.hasActiveInstance()); // false
+   * ```
+   *
+   * @private
+   */
+  private static hasActiveInstance(): boolean {
+    return (
+      SchemaTransformer.instance !== null &&
+      SchemaTransformer.instance !== undefined &&
+      !SchemaTransformer.isInstanceDisposed()
+    )
   }
 
   /**
@@ -1569,9 +1779,8 @@ export function transform<T>(
   name: string
   schema: SchemaType
 } {
-  return SchemaTransformer.getInstance(undefined, options).transform(cls)
+  return SchemaTransformer.transformClass(cls, options)
 }
 
 // Export types and interfaces for public use
-export type { TransformerOptions }
 export { SchemaTransformer }

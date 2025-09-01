@@ -35,4 +35,21 @@ interface PropertyInfo {
   isOptional: boolean
 }
 
-export { type SchemaType, type Property, type DecoratorInfo, type PropertyInfo }
+/**
+ * Configuration options for SchemaTransformer memory management
+ * @interface TransformerOptions
+ */
+interface TransformerOptions {
+  /** Maximum number of schemas to cache before cleanup (default: 100) */
+  maxCacheSize?: number
+  /** Whether to automatically clean up cache (default: true) */
+  autoCleanup?: boolean
+}
+
+export {
+  type SchemaType,
+  type Property,
+  type DecoratorInfo,
+  type PropertyInfo,
+  type TransformerOptions,
+}

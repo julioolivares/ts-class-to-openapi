@@ -31,10 +31,6 @@ describe('Plain Classes Without Decorators', () => {
       assert.ok(properties.tags, 'Should have tags property')
       assert.ok(properties.createdAt, 'Should have createdAt property')
     } catch (error) {
-      console.error(
-        'Error transforming plain class:',
-        error instanceof Error ? error.message : String(error)
-      )
       throw error
     }
   })

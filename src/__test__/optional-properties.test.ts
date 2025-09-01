@@ -14,9 +14,6 @@ import { OptionalPropertiesUser } from './entities/optional-properties.entity.js
 
 describe('Optional Properties Tests', () => {
   test('should correctly identify required and optional properties based on TypeScript optional operator', () => {
-    // Clear any existing instance to ensure clean state
-    SchemaTransformer.clearInstance()
-
     const transformer = SchemaTransformer.getInstance()
     const result = transformer.transform(OptionalPropertiesUser)
 
@@ -79,9 +76,6 @@ describe('Optional Properties Tests', () => {
   })
 
   test('should handle properties with only TypeScript optional operator (no class-validator decorators)', () => {
-    // Clear any existing instance to ensure clean state
-    SchemaTransformer.clearInstance()
-
     const transformer = SchemaTransformer.getInstance()
 
     class PlainTypeScriptClass {
@@ -121,9 +115,6 @@ describe('Optional Properties Tests', () => {
   })
 
   test('should prioritize IsNotEmpty decorator over TypeScript optional operator', () => {
-    // Clear any existing instance to ensure clean state
-    SchemaTransformer.clearInstance()
-
     const transformer = SchemaTransformer.getInstance()
 
     class MixedOptionalClass {
@@ -151,9 +142,6 @@ describe('Optional Properties Tests', () => {
   })
 
   test('should work correctly with nested objects and optional properties', () => {
-    // Clear any existing instance to ensure clean state
-    SchemaTransformer.clearInstance()
-
     const transformer = SchemaTransformer.getInstance()
 
     class Address {
@@ -190,9 +178,6 @@ describe('Optional Properties Tests', () => {
   })
 
   test('should demonstrate backward compatibility with existing class-validator decorators', () => {
-    // Clear any existing instance to ensure clean state
-    SchemaTransformer.clearInstance()
-
     const transformer = SchemaTransformer.getInstance()
 
     class LegacyClass {
