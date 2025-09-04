@@ -6,6 +6,7 @@ import {
   type DecoratorInfo,
   type PropertyInfo,
   type TransformerOptions,
+  Property,
 } from './types.js'
 
 /**
@@ -393,14 +394,6 @@ class SchemaTransformer {
     }
   }
 
-  /**
-   * @deprecated Use disposeInstance() instead for better clarity
-   * @private
-   */
-  private static dispose(): void {
-    SchemaTransformer.disposeInstance()
-  }
-
   public static getInstance(
     tsConfigPath?: string,
     options?: TransformerOptions
@@ -529,68 +522,6 @@ class SchemaTransformer {
   }
 
   /**
-   * Completely resets the transformer by disposing current instance and creating a new one.
-   * This is useful when you need a fresh start with different TypeScript configuration
-   * or want to ensure all resources are properly released and recreated.
-   *
-   * @param tsConfigPath - Optional path to a specific TypeScript config file for the new instance
-   * @param options - Configuration options for memory management for the new instance
-   * @returns A fresh SchemaTransformer instance
-   *
-   * @example
-   * ```typescript
-   * const transformer = SchemaTransformer.getInstance();
-   * // ... use transformer
-   * const freshTransformer = transformer.reset('./new-tsconfig.json');
-   * ```
-   *
-   * @private
-   */
-  private reset(
-    tsConfigPath?: string,
-    options?: TransformerOptions
-  ): SchemaTransformer {
-    // Dispose current instance using static method to properly clear instance reference
-    SchemaTransformer.disposeInstance()
-
-    // Create and return new instance
-    return SchemaTransformer.getInstance(tsConfigPath, options)
-  }
-
-  /**
-   * Gets memory usage statistics for monitoring and debugging.
-   *
-   * @returns Object containing cache size, loaded files count, and processing status
-   *
-   * @example
-   * ```typescript
-   * const transformer = SchemaTransformer.getInstance();
-   * const stats = transformer.getMemoryStats();
-   * console.log(`Cache entries: ${stats.cacheSize}, Files loaded: ${stats.loadedFiles}`);
-   * console.log(`Currently processing: ${stats.currentlyProcessing} classes`);
-   * ```
-   *
-   * @private
-   */
-  private getMemoryStats(): {
-    cacheSize: number
-    loadedFiles: number
-    currentlyProcessing: number
-    maxCacheSize: number
-    autoCleanup: boolean
-    isDisposed: boolean
-  } {
-    return {
-      cacheSize: this.classCache?.size || 0,
-      loadedFiles: this.loadedFiles?.size || 0,
-      currentlyProcessing: this.processingClasses?.size || 0,
-      maxCacheSize: this.maxCacheSize || 0,
-      autoCleanup: this.autoCleanup || false,
-      isDisposed: !this.program || !this.checker,
-    }
-  }
-
-  /**
    * Checks if the transformer instance has been disposed and is no longer usable.
    *
    * @returns True if the instance has been disposed
@@ -611,30 +542,6 @@ class SchemaTransformer {
       !this.classCache ||
       !this.loadedFiles ||
       !this.processingClasses
-    )
-  }
-
-  /**
-   * Static method to check if there's an active singleton instance.
-   *
-   * @returns True if there's an active instance, false if disposed or never created
-   *
-   * @example
-   * ```typescript
-   * console.log(SchemaTransformer.hasActiveInstance()); // false
-   * const transformer = SchemaTransformer.getInstance();
-   * console.log(SchemaTransformer.hasActiveInstance()); // true
-   * SchemaTransformer.dispose();
-   * console.log(SchemaTransformer.hasActiveInstance()); // false
-   * ```
-   *
-   * @private
-   */
-  private static hasActiveInstance(): boolean {
-    return (
-      SchemaTransformer.instance !== null &&
-      SchemaTransformer.instance !== undefined &&
-      !SchemaTransformer.isInstanceDisposed()
     )
   }
 
@@ -680,7 +587,7 @@ class SchemaTransformer {
     schema: SchemaType
   } {
     const className = classNode.name?.text || 'Unknown'
-    const properties = this.extractProperties(classNode)
+    const properties = this.getPropertiesByClass(classNode)
     const schema = this.generateSchema(properties, sourceFile?.fileName)
 
     return { name: className, schema }
@@ -693,7 +600,7 @@ class SchemaTransformer {
    * @returns Array of property information including names, types, decorators, and optional status
    * @private
    */
-  private extractProperties(classNode: ts.ClassDeclaration): PropertyInfo[] {
+  private getPropertiesByClass(classNode: ts.ClassDeclaration): PropertyInfo[] {
     const properties: PropertyInfo[] = []
 
     for (const member of classNode.members) {
@@ -706,12 +613,17 @@ class SchemaTransformer {
         const type = this.getPropertyType(member)
         const decorators = this.extractDecorators(member)
         const isOptional = !!member.questionToken
+        const isGeneric = this.isPropertyTypeGeneric(member)
+        const isPrimitive = this.isPrimitiveType(type)
 
         properties.push({
           name: propertyName,
           type,
           decorators,
           isOptional,
+          isGeneric,
+          originalProperty: member,
+          isPrimitive,
         })
       }
     }
@@ -761,16 +673,7 @@ class SchemaTransformer {
       resolvedType !== typeName &&
       !resolvedType.includes('any')
     ) {
-      // For type aliases like User<Role>, we want to create a synthetic type name
-      // that represents the resolved structure
-      const typeArgNames = typeArguments.map(arg => {
-        if (ts.isTypeReferenceNode(arg) && ts.isIdentifier(arg.typeName)) {
-          return arg.typeName.text
-        }
-        return this.getTypeNodeToString(arg)
-      })
-
-      return `${typeName}_${typeArgNames.join('_')}`
+      return resolvedType
     }
 
     return typeName
@@ -778,67 +681,227 @@ class SchemaTransformer {
 
   /**
    * Checks if a type string represents a resolved generic type.
+   * This is a legacy method that checks string patterns.
    *
    * @param type - The type string to check
    * @returns True if it's a resolved generic type
    * @private
+   * @deprecated Use isGenericTypeFromNode or isGenericTypeFromSymbol instead
    */
-  private isResolvedGenericType(type: string): boolean {
-    // Simple heuristic: resolved generic types contain underscores and
-    // the parts after underscore should be known types
-    const parts = type.split('_')
-    return (
-      parts.length > 1 &&
-      parts
-        .slice(1)
-        .every(part => this.isKnownType(part) || this.isPrimitiveType(part))
-    )
+  private isGenericType(type: string): boolean {
+    if (type.startsWith(constants.tsUtilityTypes.Partial.value)) return true
+    if (type.startsWith(constants.tsUtilityTypes.Required.value)) return true
+
+    return false
   }
 
   /**
-   * Checks if a type is a known class or interface.
+   * Checks if a TypeScript type node represents a generic type using TypeScript's API.
+   * This is a more robust approach than string-based detection.
    *
-   * @param typeName - The type name to check
-   * @returns True if it's a known type
+   * @param typeNode - The TypeScript type node to analyze
+   * @returns True if it's a generic type
    * @private
    */
-  private isKnownType(typeName: string): boolean {
-    // First check if it's a primitive type to avoid unnecessary lookups
-    if (this.isPrimitiveType(typeName)) {
+  private isGenericTypeFromNode(typeNode: ts.TypeNode): boolean {
+    // Check if it's a type reference with type arguments (e.g., Array<T>, Promise<T>)
+    if (ts.isTypeReferenceNode(typeNode) && typeNode.typeArguments) {
+      return typeNode.typeArguments.length > 0
+    }
+
+    // Check for mapped types (e.g., { [K in keyof T]: T[K] })
+    if (ts.isMappedTypeNode(typeNode)) {
       return true
     }
 
-    try {
-      // Use a more conservative approach - check if we can find the class
-      // without actually transforming it to avoid side effects
-      const found = this.findClassInProject(typeName)
-      return found !== null
-    } catch {
-      return false
-    }
-  }
-
-  /**
-   * Finds a class by name in the project without transforming it.
-   *
-   * @param className - The class name to find
-   * @returns True if found, false otherwise
-   * @private
-   */
-  private findClassInProject(className: string): boolean {
-    const sourceFiles = this.program.getSourceFiles().filter(sf => {
-      if (sf.isDeclarationFile) return false
-      if (sf.fileName.includes('.d.ts')) return false
-      if (sf.fileName.includes('node_modules')) return false
+    // Check for conditional types (e.g., T extends U ? X : Y)
+    if (ts.isConditionalTypeNode(typeNode)) {
       return true
-    })
+    }
 
-    for (const sourceFile of sourceFiles) {
-      const found = this.findClassByName(sourceFile, className)
-      if (found) return true
+    // Check for indexed access types (e.g., T[K])
+    if (ts.isIndexedAccessTypeNode(typeNode)) {
+      return true
+    }
+
+    // Check for type operators like keyof, typeof
+    if (ts.isTypeOperatorNode(typeNode)) {
+      return true
     }
 
     return false
+  }
+
+  /**
+   * Checks if a TypeScript Type represents a simple array type (not a generic utility type).
+   * Simple arrays like string[], Data[], User[] should not be considered generic types.
+   *
+   * @param type - The TypeScript Type to check
+   * @returns True if it's a simple array type
+   * @private
+   */
+  private isSimpleArrayType(type: ts.Type): boolean {
+    const symbol = type.getSymbol()
+    if (!symbol || symbol.getName() !== 'Array') {
+      return false
+    }
+
+    // Check if this is Array<T> where T is a simple, non-generic type
+    if (
+      (type as any).typeArguments &&
+      (type as any).typeArguments.length === 1
+    ) {
+      const elementType = (type as any).typeArguments[0]
+      if (!elementType) return false
+
+      // If the element type is a utility type, then this array should be considered generic
+      if (this.isUtilityTypeFromType(elementType)) {
+        return false
+      }
+
+      // If the element type itself has generic parameters, this array is generic
+      if (
+        (elementType as any).typeArguments &&
+        (elementType as any).typeArguments.length > 0
+      ) {
+        return false
+      }
+
+      return true
+    }
+
+    return false
+  }
+
+  /**
+   * Checks if a TypeScript Type represents a utility type.
+   *
+   * @param type - The TypeScript Type to check
+   * @returns True if it's a utility type
+   * @private
+   */
+  private isUtilityTypeFromType(type: ts.Type): boolean {
+    if (!type.aliasSymbol) return false
+
+    const aliasName = type.aliasSymbol.getName()
+    const utilityTypes = [
+      'Partial',
+      'Required',
+      'Readonly',
+      'Pick',
+      'Omit',
+      'Record',
+      'Exclude',
+      'Extract',
+      'NonNullable',
+    ]
+
+    return utilityTypes.includes(aliasName)
+  }
+
+  /**
+   * Checks if a TypeScript type (from TypeChecker) represents a generic type.
+   * Uses the TypeChecker API to analyze type symbols and flags.
+   *
+   * @param type - The TypeScript type from TypeChecker
+   * @returns True if it's a generic type
+   * @private
+   */
+  private isGenericTypeFromSymbol(type: ts.Type): boolean {
+    // First check if it's a simple array type - these should NOT be considered generic
+    if (this.isSimpleArrayType(type)) {
+      return false
+    }
+
+    // Check if the type has type parameters
+    if (type.aliasTypeArguments && type.aliasTypeArguments.length > 0) {
+      return true
+    }
+
+    // Check if it's a type reference with type arguments
+    // But exclude simple arrays which internally use Array<T> representation
+    if ((type as any).typeArguments && (type as any).typeArguments.length > 0) {
+      const symbol = type.getSymbol()
+      if (symbol && symbol.getName() === 'Array') {
+        // This is Array<T> - only consider it generic if T itself is a utility type
+        const elementType = (type as any).typeArguments[0]
+        if (elementType) {
+          return this.isUtilityTypeFromType(elementType)
+        }
+        return false
+      }
+      return true
+    }
+
+    // Check type flags for generic indicators
+    if (type.flags & ts.TypeFlags.TypeParameter) {
+      return true
+    }
+
+    if (type.flags & ts.TypeFlags.Conditional) {
+      return true
+    }
+
+    if (type.flags & ts.TypeFlags.Index) {
+      return true
+    }
+
+    if (type.flags & ts.TypeFlags.IndexedAccess) {
+      return true
+    }
+
+    // Check if the type symbol indicates a generic type
+    const symbol = type.getSymbol()
+    if (symbol && symbol.declarations) {
+      for (const declaration of symbol.declarations) {
+        // Check for type alias declarations with type parameters
+        if (
+          ts.isTypeAliasDeclaration(declaration) &&
+          declaration.typeParameters
+        ) {
+          return true
+        }
+
+        // Check for interface declarations with type parameters
+        if (
+          ts.isInterfaceDeclaration(declaration) &&
+          declaration.typeParameters
+        ) {
+          return true
+        }
+
+        // Check for class declarations with type parameters
+        if (ts.isClassDeclaration(declaration) && declaration.typeParameters) {
+          return true
+        }
+      }
+    }
+
+    return false
+  }
+
+  /**
+   * Enhanced method to check if a property type is generic.
+   * Uses both the property declaration and TypeChecker for comprehensive analysis.
+   *
+   * @param property - The property declaration to analyze
+   * @returns True if the property type is generic
+   * @private
+   */
+  private isPropertyTypeGeneric(property: ts.PropertyDeclaration): boolean {
+    // First, check the type node if it exists
+    if (property.type && this.isGenericTypeFromNode(property.type)) {
+      return true
+    }
+
+    // Then check using TypeChecker
+    try {
+      const type = this.checker.getTypeAtLocation(property)
+      return this.isGenericTypeFromSymbol(type)
+    } catch (error) {
+      console.warn('Error analyzing property type for generics:', error)
+      return false
+    }
   }
 
   /**
@@ -862,9 +925,18 @@ class SchemaTransformer {
       constants.jsPrimitives.File.type.toLowerCase(),
       constants.jsPrimitives.UploadFile.type.toLowerCase(),
       constants.jsPrimitives.BigInt.type.toLowerCase(),
+      constants.jsPrimitives.Symbol.type.toLowerCase(),
+      constants.jsPrimitives.null.type.toLowerCase(),
+      constants.jsPrimitives.Object.type.toLowerCase(),
+      constants.jsPrimitives.Array.type.toLowerCase(),
     ]
 
-    return primitiveTypes.includes(lowerTypeName)
+    const primitivesArray = primitiveTypes.map(t => t.concat('[]'))
+
+    return (
+      primitiveTypes.includes(lowerTypeName) ||
+      primitivesArray.includes(lowerTypeName)
+    )
   }
 
   /**
@@ -877,145 +949,26 @@ class SchemaTransformer {
   private resolveGenericTypeSchema(
     resolvedTypeName: string
   ): SchemaType | null {
-    const parts = resolvedTypeName.split('_')
-    const baseTypeName = parts[0]
-    const typeArgNames = parts.slice(1)
+    const parts = resolvedTypeName.split('<')
+    let baseTypeName = parts[1]?.trim()
 
     if (!baseTypeName) {
       return null
     }
 
-    // Find the original type alias declaration
-    const typeAliasSymbol = this.findTypeAliasDeclaration(baseTypeName)
-    if (!typeAliasSymbol) {
-      return null
+    baseTypeName = baseTypeName.substring(0, baseTypeName.length - 1)
+
+    let { schema } = this.transformByName(baseTypeName)
+
+    if (parts[0]?.includes(constants.tsUtilityTypes.Partial.value))
+      schema.required = []
+    else {
+      schema.required = Object.entries(schema.properties).map(
+        ([key, value]) => key
+      )
     }
 
-    // Create a schema based on the type alias structure, substituting type parameters
-    return this.createSchemaFromTypeAlias(typeAliasSymbol, typeArgNames)
-  }
-
-  /**
-   * Finds a type alias declaration by name.
-   *
-   * @param typeName - The type alias name to find
-   * @returns The type alias declaration node or null
-   * @private
-   */
-  private findTypeAliasDeclaration(
-    typeName: string
-  ): ts.TypeAliasDeclaration | null {
-    for (const sourceFile of this.program.getSourceFiles()) {
-      if (sourceFile.isDeclarationFile) continue
-
-      const findTypeAlias = (node: ts.Node): ts.TypeAliasDeclaration | null => {
-        if (ts.isTypeAliasDeclaration(node) && node.name.text === typeName) {
-          return node
-        }
-        return ts.forEachChild(node, findTypeAlias) || null
-      }
-
-      const result = findTypeAlias(sourceFile)
-      if (result) return result
-    }
-    return null
-  }
-
-  /**
-   * Creates a schema from a type alias declaration, substituting type parameters.
-   *
-   * @param typeAlias - The type alias declaration
-   * @param typeArgNames - The concrete type arguments
-   * @returns OpenAPI schema for the type alias
-   * @private
-   */
-  private createSchemaFromTypeAlias(
-    typeAlias: ts.TypeAliasDeclaration,
-    typeArgNames: string[]
-  ): SchemaType | null {
-    const typeNode = typeAlias.type
-
-    if (ts.isTypeLiteralNode(typeNode)) {
-      const schema: SchemaType = {
-        type: 'object',
-        properties: {},
-        required: [],
-      }
-
-      for (const member of typeNode.members) {
-        if (
-          ts.isPropertySignature(member) &&
-          member.name &&
-          ts.isIdentifier(member.name)
-        ) {
-          const propertyName = member.name.text
-          const isOptional = !!member.questionToken
-
-          if (member.type) {
-            const propertyType = this.resolveTypeParameterInTypeAlias(
-              member.type,
-              typeAlias.typeParameters,
-              typeArgNames
-            )
-
-            const { type, format, nestedSchema } =
-              this.mapTypeToSchema(propertyType)
-
-            if (nestedSchema) {
-              schema.properties[propertyName] = nestedSchema
-            } else {
-              schema.properties[propertyName] = { type }
-              if (format) schema.properties[propertyName].format = format
-            }
-
-            if (!isOptional) {
-              schema.required.push(propertyName)
-            }
-          }
-        }
-      }
-
-      return schema
-    }
-
-    return null
-  }
-
-  /**
-   * Resolves type parameters in a type alias to concrete types.
-   *
-   * @param typeNode - The type node to resolve
-   * @param typeParameters - The type parameters of the type alias
-   * @param typeArgNames - The concrete type arguments
-   * @returns The resolved type string
-   * @private
-   */
-  private resolveTypeParameterInTypeAlias(
-    typeNode: ts.TypeNode,
-    typeParameters: ts.NodeArray<ts.TypeParameterDeclaration> | undefined,
-    typeArgNames: string[]
-  ): string {
-    if (
-      ts.isTypeReferenceNode(typeNode) &&
-      ts.isIdentifier(typeNode.typeName)
-    ) {
-      const typeName = typeNode.typeName.text
-
-      // Check if this is a type parameter
-      if (typeParameters) {
-        const paramIndex = typeParameters.findIndex(
-          param => param.name.text === typeName
-        )
-        if (paramIndex !== -1 && paramIndex < typeArgNames.length) {
-          const resolvedType = typeArgNames[paramIndex]
-          return resolvedType || typeName
-        }
-      }
-
-      return typeName
-    }
-
-    return this.getTypeNodeToString(typeNode)
+    return schema
   }
 
   /**
@@ -1043,9 +996,6 @@ class SchemaTransformer {
         ) {
           if (firstTypeArg.typeName.text.toLowerCase().includes('uploadfile')) {
             return 'UploadFile'
-          }
-          if (typeNode.typeName.text === 'BaseDto') {
-            return firstTypeArg.typeName.text
           }
         }
 
@@ -1171,36 +1121,255 @@ class SchemaTransformer {
     }
 
     for (const property of properties) {
-      const { type, format, nestedSchema } = this.mapTypeToSchema(
-        property.type,
-        contextFilePath
+      // Try to extract detailed schema from external type first if we have the original property
+      let externalSchema: SchemaType | null = null
+      const typeSymbol = this.checker.getTypeAtLocation(
+        property.originalProperty
       )
 
-      if (nestedSchema) {
-        schema.properties[property.name] = nestedSchema
+      if (property.isPrimitive) {
+        this.applySchemaForPrimitiveTypes(property, schema)
+      } else if (this.isUtilityType(typeSymbol)) {
+        const utilitySchema = this.handleUtilityType(typeSymbol)
+      }
+      // Generic Types
+      else if (property.isGeneric) {
+        const { type, format, nestedSchema } = this.mapGenericTypeToSchema(
+          property,
+          contextFilePath
+        )
 
-        // Skip decorator application for $ref schemas
-        if (this.isRefSchema(nestedSchema)) {
-          continue
+        if (nestedSchema) {
+          schema.properties[property.name] = nestedSchema
+          // Skip decorator application for $ref schemas
+          if (this.isRefSchema(nestedSchema)) {
+            continue
+          }
+        } else {
+          schema.properties[property.name] = { type }
+          if (format) schema.properties[property.name].format = format
+        }
+      } else if (this.isExternalType(property.originalProperty)) {
+        const externalType = this.checker.getTypeAtLocation(
+          property.originalProperty
+        )
+
+        externalSchema = this.extractPropertiesFromExternalType({
+          property: property.originalProperty as ts.PropertyDeclaration,
+          type: externalType,
+          typeName: property.type,
+        })
+
+        if (externalSchema) {
+          // Use the detailed external schema
+          schema.properties[property.name] = externalSchema
         }
       } else {
-        schema.properties[property.name] = { type }
-        if (format) schema.properties[property.name].format = format
+        const parseClass = this.getClassNodeFromType(typeSymbol)
+
+        if (parseClass) {
+          schema.properties[property.name] =
+            this.generateSchemaFromClass(parseClass)
+        }
       }
 
-      // Apply decorators if present
-      this.applyDecorators(property.decorators, schema, property.name)
-
-      // If no decorators are present, apply type-based format specifications
-      if (property.decorators.length === 0) {
-        this.applyTypeBasedFormats(property, schema)
-      }
-
-      // Determine if property should be required based on decorators and optional status
       this.determineRequiredStatus(property, schema)
+
+      this.applyDecorators(property.decorators, schema, property.name)
     }
 
     return schema
+  }
+
+  /**
+   *
+   * @param parseClass
+   * @returns
+   */
+  generateSchemaFromClass(parseClass: ts.ClassDeclaration) {
+    const properties = this.getPropertiesByClass(parseClass)
+    return this.generateSchema(properties)
+  }
+
+  /**
+   * Checks if a TypeScript Node is of an external type.
+   *
+   * @param node - The TypeScript node to check
+   * @returns True if the node is of an external type
+   * @private
+   */
+  private isExternalType(node: ts.Node): boolean {
+    const type = this.checker.getTypeAtLocation(node)
+
+    // For arrays, check if the element type is external, not the array itself
+    if (this.isArrayType(type)) {
+      const elementType = this.getArrayElementType(type)
+      if (elementType) {
+        return this.isExternalTypeFromType(elementType)
+      }
+      return false
+    }
+
+    return this.isExternalTypeFromType(type)
+  }
+
+  /**
+   * Checks if a TypeScript Type comes from an external library (node_modules).
+   *
+   * @param type - The TypeScript type to check
+   * @returns True if the type is from an external library
+   * @private
+   */
+  private isExternalTypeFromType(type: ts.Type): boolean {
+    const symbol = type.getSymbol()
+    if (!symbol) return false
+
+    const declaration = symbol.valueDeclaration || symbol.declarations?.[0]
+    if (!declaration) return false
+
+    const sourceFile = declaration.getSourceFile().fileName
+
+    return sourceFile.includes('node_modules')
+  }
+  /**
+   * Extracts properties from an external type using TypeChecker API.
+   * This method can analyze types from external packages and create detailed schemas.
+   *
+   * @param property - The property declaration with the external type
+   * @param contextFilePath - Optional context file path for module resolution
+   * @returns Detailed schema for the external type or null if cannot be resolved
+   * @private
+   */
+  private extractPropertiesFromExternalType({
+    type,
+    property,
+    typeName,
+  }: {
+    type: ts.Type
+    property: ts.PropertyDeclaration
+    typeName: string
+  }): SchemaType | null {
+    try {
+      // Get the symbol for the type
+      const symbol = type.getSymbol()
+      if (!symbol) {
+        return null
+      }
+
+      // Check if this is a class or interface with properties
+      const properties: { [key: string]: any } = {}
+      const required: string[] = []
+
+      // Get the properties of the type
+      const typeProperties = this.checker.getPropertiesOfType(type)
+
+      for (const prop of typeProperties) {
+        const propName = prop.getName()
+
+        // Skip private properties and methods
+        if (propName.startsWith('_') || propName.startsWith('#')) {
+          continue
+        }
+
+        // Get the type of this property
+        const propType = this.checker.getTypeOfSymbolAtLocation(prop, property)
+        const propTypeString = this.checker.typeToString(propType)
+
+        // Skip function types for now (methods)
+        if (
+          propTypeString.includes('=>') ||
+          propTypeString.includes('function')
+        ) {
+          continue
+        }
+
+        // Map the property type to OpenAPI schema
+        const mappedType = this.mapPrimitiveType(propTypeString)
+        properties[propName] = mappedType
+
+        // Check if the property is optional
+        const propDeclaration = prop.valueDeclaration
+        const isOptional =
+          propDeclaration &&
+          ts.isPropertyDeclaration(propDeclaration) &&
+          !!propDeclaration.questionToken
+
+        if (!isOptional) {
+          required.push(propName)
+        }
+      }
+
+      // Only return a schema if we found some properties
+      if (Object.keys(properties).length > 0) {
+        if (
+          typeName.endsWith('[]') ||
+          typeName.startsWith('Array<') ||
+          typeName === 'array'
+        ) {
+          return {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties,
+              required,
+            },
+          }
+        } else {
+          return {
+            type: 'object',
+            properties,
+            required,
+          }
+        }
+      }
+
+      return null
+    } catch (error) {
+      console.warn('Failed to extract properties from external type:', error)
+      return null
+    }
+  }
+
+  /**
+   * Maps a TypeScript type string to a simple OpenAPI type.
+   * Used for mapping individual properties from external types.
+   *
+   * @param typeString - The TypeScript type string
+   * @returns OpenAPI property schema
+   * @private
+   */
+  private mapPrimitiveType(typeString: string): {
+    type: string
+    format?: string
+  } {
+    const lowerType = typeString.toLowerCase()
+
+    // Handle arrays
+    if (typeString.endsWith('[]')) {
+      const elementType = typeString.slice(0, -2)
+      const elementSchema = this.mapPrimitiveType(elementType)
+      return {
+        type: 'array',
+        items: elementSchema,
+      } as any
+    }
+
+    // Handle primitives
+    if (lowerType.includes('string')) {
+      return { type: 'string' }
+    }
+    if (lowerType.includes('number') || lowerType.includes('integer')) {
+      return { type: 'number' }
+    }
+    if (lowerType.includes('boolean')) {
+      return { type: 'boolean' }
+    }
+    if (lowerType.includes('date')) {
+      return { type: 'string', format: 'date-time' }
+    }
+
+    // For complex types, fallback to object
+    return { type: 'object' }
   }
 
   /**
@@ -1268,8 +1437,7 @@ class SchemaTransformer {
           format: constants.jsPrimitives.UploadFile.format,
         }
       default:
-        // Check if it's a resolved generic type (e.g., User_Role)
-        if (type.includes('_') && this.isResolvedGenericType(type)) {
+        if (this.isGenericType(type)) {
           try {
             const genericSchema = this.resolveGenericTypeSchema(type)
             if (genericSchema) {
@@ -1302,6 +1470,240 @@ class SchemaTransformer {
         } catch {
           return { type: constants.jsPrimitives.Object.value }
         }
+    }
+  }
+
+  /**
+   * Maps generic TypeScript types to OpenAPI schema types using TypeScript's API.
+   * This method provides enhanced handling for generic types compared to the basic mapTypeToSchema.
+   *
+   * @param property - The property information containing the generic type
+   * @param contextFilePath - Optional context file path for resolving class references
+   * @returns Object containing OpenAPI type, optional format, and nested schema
+   * @private
+   */
+  private mapGenericTypeToSchema(
+    property: PropertyInfo,
+    contextFilePath?: string
+  ): {
+    type: string
+    format?: string
+    nestedSchema?: SchemaType
+  } {
+    if (!property.originalProperty) {
+      // Fallback to regular mapping if no original property is available
+      return this.mapTypeToSchema(property.type, contextFilePath)
+    }
+
+    try {
+      const type = this.checker.getTypeAtLocation(property.originalProperty)
+
+      // Handle arrays with generic element types
+      if (this.isArrayType(type)) {
+        const elementType = this.getArrayElementType(type)
+        if (elementType) {
+          const elementSchema = this.mapTypeFromTSType(
+            elementType,
+            contextFilePath
+          )
+          return {
+            type: 'array',
+            nestedSchema: {
+              type: 'array',
+              items: elementSchema.nestedSchema || { type: elementSchema.type },
+              properties: {},
+              required: [],
+            },
+          }
+        }
+      }
+
+      // Handle generic utility types (Partial<T>, Required<T>, etc.)
+      if (this.isUtilityType(type)) {
+        return this.handleUtilityType(type, contextFilePath)
+      }
+
+      // Handle other generic types
+      const mappedType = this.mapTypeFromTSType(type, contextFilePath)
+      return mappedType
+    } catch (error) {
+      console.warn(
+        `Error mapping generic type for property ${property.name}:`,
+        error
+      )
+      // Fallback to regular mapping
+      return this.mapTypeToSchema(property.type, contextFilePath)
+    }
+  }
+
+  /**
+   * Maps a TypeScript Type object to OpenAPI schema.
+   *
+   * @param type - The TypeScript Type object from TypeChecker
+   * @param contextFilePath - Optional context file path for resolving class references
+   * @returns Object containing OpenAPI type, optional format, and nested schema
+   * @private
+   */
+  private mapTypeFromTSType(
+    type: ts.Type,
+    contextFilePath?: string
+  ): {
+    type: string
+    format?: string
+    nestedSchema?: SchemaType
+  } {
+    const typeString = this.checker.typeToString(type)
+
+    // Check for primitive types first
+    if (type.flags & ts.TypeFlags.String) {
+      return { type: 'string' }
+    }
+    if (type.flags & ts.TypeFlags.Number) {
+      return { type: 'number' }
+    }
+    if (type.flags & ts.TypeFlags.Boolean) {
+      return { type: 'boolean' }
+    }
+
+    // Handle Date objects
+    if (typeString === 'Date') {
+      return {
+        type: 'string',
+        format: 'date-time',
+      }
+    }
+
+    // Handle object types
+    if (type.flags & ts.TypeFlags.Object) {
+      // Try to resolve as a class type
+      try {
+        const nestedResult = this.transformByName(typeString, contextFilePath)
+        return {
+          type: 'object',
+          nestedSchema: nestedResult.schema,
+        }
+      } catch {
+        return { type: 'object' }
+      }
+    }
+
+    // Default fallback
+    return { type: 'object' }
+  }
+
+  /**
+   * Checks if a TypeScript Type represents an array type.
+   *
+   * @param type - The TypeScript Type to check
+   * @returns True if it's an array type
+   * @private
+   */
+  private isArrayType(type: ts.Type): boolean {
+    const symbol = type.getSymbol()
+    if (symbol) {
+      const name = symbol.getName()
+      if (name === 'Array') return true
+    }
+
+    // Check if it has a number index signature (array-like)
+    const numberIndexType = type.getNumberIndexType()
+    return numberIndexType !== undefined
+  }
+
+  /**
+   * Gets the element type of an array type.
+   *
+   * @param type - The array TypeScript Type
+   * @returns The element type or undefined if not an array
+   * @private
+   */
+  private getArrayElementType(type: ts.Type): ts.Type | undefined {
+    // For Array<T>, the type arguments contain the element type
+    if ((type as any).typeArguments && (type as any).typeArguments.length > 0) {
+      return (type as any).typeArguments[0]
+    }
+
+    // For T[], get the number index type
+    return type.getNumberIndexType()
+  }
+
+  /**
+   * Checks if a TypeScript Type is a utility type (Partial, Required, etc.).
+   *
+   * @param type - The TypeScript Type to check
+   * @returns True if it's a utility type
+   * @private
+   */
+  private isUtilityType(type: ts.Type): boolean {
+    if (!type.aliasSymbol) return false
+
+    const aliasName = type.aliasSymbol.getName()
+
+    return (
+      aliasName.startsWith(constants.tsUtilityTypes.Partial.value) ||
+      aliasName.startsWith(constants.tsUtilityTypes.Required.value)
+    )
+  }
+
+  /**
+   * Handles utility types like Partial<T>, Required<T>, etc.
+   *
+   * @param type - The utility type to handle
+   * @param contextFilePath - Optional context file path for resolving class references
+   * @returns Object containing OpenAPI type, optional format, and nested schema
+   * @private
+   */
+  private handleUtilityType(
+    type: ts.Type,
+    contextFilePath?: string
+  ): {
+    type: string
+    format?: string
+    nestedSchema?: SchemaType
+  } {
+    if (
+      !type.aliasSymbol ||
+      !type.aliasTypeArguments ||
+      type.aliasTypeArguments.length === 0
+    ) {
+      return { type: 'object' }
+    }
+
+    const aliasName = type.aliasSymbol.getName()
+    const baseType = type.aliasTypeArguments[0]
+
+    if (!baseType) {
+      return { type: 'object' }
+    }
+
+    const baseTypeString = this.checker.typeToString(baseType)
+
+    try {
+      const baseSchema = this.transformByName(baseTypeString, contextFilePath)
+      const schema = { ...baseSchema.schema }
+
+      // Modify the schema based on the utility type
+      switch (aliasName) {
+        case 'Partial':
+          // All properties become optional
+          schema.required = []
+          break
+        case 'Required':
+          // All properties become required
+          if (schema.properties) {
+            schema.required = Object.keys(schema.properties)
+          }
+          break
+        // Add more utility type handling as needed
+      }
+
+      return {
+        type: 'object',
+        nestedSchema: schema,
+      }
+    } catch (error) {
+      console.warn(`Error handling utility type ${aliasName}:`, error)
+      return { type: 'object' }
     }
   }
 
@@ -1674,7 +2076,7 @@ class SchemaTransformer {
    * @param schema - The schema object to modify
    * @private
    */
-  private applyTypeBasedFormats(
+  private applySchemaForPrimitiveTypes(
     property: PropertyInfo,
     schema: SchemaType
   ): void {
@@ -1683,28 +2085,49 @@ class SchemaTransformer {
       return
     }
 
-    const propertyName = property.name
     const propertyType = property.type.toLowerCase()
 
-    const propertySchema = schema.properties[propertyName]
-
+    const propertySchema = {} as Property
     switch (propertyType) {
+      case constants.jsPrimitives.String.value:
+        propertySchema.type = constants.jsPrimitives.String.value
+        break
       case constants.jsPrimitives.Number.value:
+        propertySchema.type = constants.jsPrimitives.Number.value
         propertySchema.format = constants.jsPrimitives.Number.format
         break
-      case constants.jsPrimitives.BigInt.value:
+      case constants.jsPrimitives.BigInt.type.toLocaleLowerCase():
+        propertySchema.type = constants.jsPrimitives.BigInt.value
         propertySchema.format = constants.jsPrimitives.BigInt.format
         break
       case constants.jsPrimitives.Date.value:
+        propertySchema.type = constants.jsPrimitives.Date.value
         propertySchema.format = constants.jsPrimitives.Date.format
         break
       case constants.jsPrimitives.Buffer.value:
       case constants.jsPrimitives.Uint8Array.value:
       case constants.jsPrimitives.File.value:
       case constants.jsPrimitives.UploadFile.value:
+        propertySchema.type = constants.jsPrimitives.UploadFile.value
         propertySchema.format = constants.jsPrimitives.UploadFile.format
         break
+      case constants.jsPrimitives.Array.value:
+        propertySchema.type = constants.jsPrimitives.Array.value
+        break
+      case constants.jsPrimitives.Boolean.value:
+        propertySchema.type = constants.jsPrimitives.Boolean.value
+        break
+      case constants.jsPrimitives.Symbol.type.toLocaleLowerCase():
+        propertySchema.type = constants.jsPrimitives.Symbol.value
+        break
+      case constants.jsPrimitives.Object.value:
+        propertySchema.type = constants.jsPrimitives.Object.value
+        break
+      default:
+        propertySchema.type = constants.jsPrimitives.String.value
     }
+
+    schema.properties[property.name] = propertySchema
   }
 
   /**
@@ -1745,6 +2168,150 @@ class SchemaTransformer {
 
     // If property is not optional and not already required, make it required
     schema.required.push(propertyName)
+  }
+
+  /**
+   * Gets the class declaration node from a TypeScript Type.
+   * Handles both direct class types and array element types.
+   *
+   * @param type - The TypeScript Type to analyze
+   * @param visitedTypes - Set to track visited types and prevent infinite recursion
+   * @returns The class declaration node if found, undefined otherwise
+   * @private
+   */
+  private getClassNodeFromType(
+    type: ts.Type,
+    visitedTypes = new Set<ts.Type>()
+  ): ts.ClassDeclaration | undefined {
+    // Prevent infinite recursion
+    if (visitedTypes.has(type)) {
+      return undefined
+    }
+    visitedTypes.add(type)
+
+    // First check if it's an array type
+    if (this.isArrayType(type)) {
+      const elementType = this.getArrayElementType(type)
+      if (elementType) {
+        // Recursively call with the element type
+        return this.getClassNodeFromType(elementType, visitedTypes)
+      }
+      return undefined
+    }
+
+    const symbol = type.getSymbol()
+    if (!symbol) return undefined
+
+    // Get the first declaration that is a class
+    const declarations = symbol.getDeclarations()
+    if (!declarations) return undefined
+
+    for (const declaration of declarations) {
+      if (ts.isClassDeclaration(declaration)) {
+        return declaration
+      }
+    }
+
+    return undefined
+  } /**
+   * Gets the class declaration node from a property's type.
+   *
+   * @param property - The property declaration
+   * @returns The class declaration node if the property type is a class, undefined otherwise
+   * @private
+   */
+  private getClassNodeFromProperty(
+    property: ts.PropertyDeclaration
+  ): ts.ClassDeclaration | undefined {
+    const type = this.checker.getTypeAtLocation(property)
+    return this.getClassNodeFromType(type)
+  }
+
+  /**
+   * Alternative method to get class information including source file.
+   * Handles both direct class types and array element types.
+   *
+   * @param type - The TypeScript Type to analyze
+   * @param visitedTypes - Set to track visited types and prevent infinite recursion
+   * @returns Object with class node and source file information
+   * @private
+   */
+  private getClassInfoFromType(
+    type: ts.Type,
+    visitedTypes = new Set<ts.Type>()
+  ): {
+    classNode: ts.ClassDeclaration | undefined
+    sourceFile: ts.SourceFile | undefined
+    className: string | undefined
+    isArray: boolean
+  } {
+    // Prevent infinite recursion
+    if (visitedTypes.has(type)) {
+      return {
+        classNode: undefined,
+        sourceFile: undefined,
+        className: undefined,
+        isArray: false,
+      }
+    }
+    visitedTypes.add(type)
+
+    let isArray = false
+    let actualType = type
+
+    // Check if it's an array type
+    if (this.isArrayType(type)) {
+      isArray = true
+      const elementType = this.getArrayElementType(type)
+      if (elementType) {
+        actualType = elementType
+      } else {
+        return {
+          classNode: undefined,
+          sourceFile: undefined,
+          className: undefined,
+          isArray,
+        }
+      }
+    }
+
+    const symbol = actualType.getSymbol()
+    if (!symbol) {
+      return {
+        classNode: undefined,
+        sourceFile: undefined,
+        className: undefined,
+        isArray,
+      }
+    }
+
+    const declarations = symbol.getDeclarations()
+    if (!declarations) {
+      return {
+        classNode: undefined,
+        sourceFile: undefined,
+        className: undefined,
+        isArray,
+      }
+    }
+
+    for (const declaration of declarations) {
+      if (ts.isClassDeclaration(declaration)) {
+        return {
+          classNode: declaration,
+          sourceFile: declaration.getSourceFile(),
+          className: declaration.name?.text,
+          isArray,
+        }
+      }
+    }
+
+    return {
+      classNode: undefined,
+      sourceFile: undefined,
+      className: undefined,
+      isArray,
+    }
   }
 }
 

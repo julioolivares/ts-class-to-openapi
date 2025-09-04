@@ -15,7 +15,7 @@ const jsPrimitives = {
   String: { type: 'String', value: 'string' },
   Number: { type: 'Number', value: 'number', format: 'float' },
   Boolean: { type: 'Boolean', value: 'boolean' },
-  Symbol: { type: 'Symbol', value: 'symbol' },
+  Symbol: { type: 'Symbol', value: 'string' },
   BigInt: { type: 'BigInt', value: 'integer', format: 'int64' },
   null: { type: 'null', value: 'null' },
   Object: { type: 'Object', value: 'object' },
@@ -49,10 +49,16 @@ const validatorDecorators = {
   IsEnum: { name: 'IsEnum', type: 'string' },
 }
 
+const tsUtilityTypes = {
+  Partial: { type: 'Partial', value: 'Partial<' },
+  Required: { type: 'Required', value: 'Required<' },
+}
+
 const constants = {
   TS_CONFIG_DEFAULT_PATH,
   jsPrimitives,
   validatorDecorators,
+  tsUtilityTypes,
 }
 
 export { messages, constants }

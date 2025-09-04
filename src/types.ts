@@ -1,3 +1,4 @@
+import ts from 'typescript'
 type Property = { [key: string]: any } & { type: string }
 
 // Support for both regular schemas and $ref schemas (OpenAPI 3.1)
@@ -8,6 +9,7 @@ type SchemaType =
   | ({ [key: string]: any } & {
       $ref: string
     })
+  | ({ [key: string]: any } & { type: 'array' } & { items: SchemaType })
 
 /**
  * Information about a class-validator decorator found on a property.
@@ -33,6 +35,14 @@ interface PropertyInfo {
   decorators: DecoratorInfo[]
   /** Whether the property is optional (has ? operator) */
   isOptional: boolean
+  /** Whether the property type is a generic type */
+  isGeneric: boolean
+
+  /** Whether the property type is a primitive type */
+  isPrimitive: boolean
+
+  /** The original TypeScript property declaration (optional) */
+  originalProperty: ts.Node
 }
 
 /**
