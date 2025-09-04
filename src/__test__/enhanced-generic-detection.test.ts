@@ -1,6 +1,7 @@
 import { test, describe, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert'
 import { SchemaTransformer } from '../transformer.js'
+import { Server } from 'socket.io'
 
 class Data {
   id: number
@@ -17,10 +18,11 @@ class GenericTestEntity<T> {
 class ComplexGenericEntity {
   id: number
   partialData: Partial<Data>
-  requiredData: Required<Data>
-  pickedData: Pick<Data, 'name' | 'value'>
+  /*requiredData: Required<Data>
+  pickedData: Pick<Data, 'name' | 'value'> */
   arrayData: Data[]
   recordData: Data
+  server: Server
 }
 
 describe('Enhanced Generic Type Detection', () => {

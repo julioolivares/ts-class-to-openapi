@@ -830,7 +830,10 @@ class SchemaTransformer {
         }
         return false
       }
-      return true
+
+      const elementType = (type as any).typeArguments[0]
+
+      return this.isUtilityTypeFromType(elementType)
     }
 
     // Check type flags for generic indicators
@@ -1127,6 +1130,8 @@ class SchemaTransformer {
         property.originalProperty
       )
 
+      schema.properties[property.name] = {}
+
       if (property.isPrimitive) {
         this.applySchemaForPrimitiveTypes(property, schema)
       } else if (this.isUtilityType(typeSymbol)) {
@@ -1149,16 +1154,8 @@ class SchemaTransformer {
           schema.properties[property.name] = { type }
           if (format) schema.properties[property.name].format = format
         }
-      } else if (this.isExternalType(property.originalProperty)) {
-        const externalType = this.checker.getTypeAtLocation(
-          property.originalProperty
-        )
-
-        externalSchema = this.extractPropertiesFromExternalType({
-          property: property.originalProperty as ts.PropertyDeclaration,
-          type: externalType,
-          typeName: property.type,
-        })
+      } else if (this.isExternalType(typeSymbol)) {
+        externalSchema = this.extractSchemaFromExternalType(typeSymbol)
 
         if (externalSchema) {
           // Use the detailed external schema
@@ -1198,9 +1195,7 @@ class SchemaTransformer {
    * @returns True if the node is of an external type
    * @private
    */
-  private isExternalType(node: ts.Node): boolean {
-    const type = this.checker.getTypeAtLocation(node)
-
+  private isExternalType(type: ts.Type): boolean {
     // For arrays, check if the element type is external, not the array itself
     if (this.isArrayType(type)) {
       const elementType = this.getArrayElementType(type)
@@ -1240,15 +1235,7 @@ class SchemaTransformer {
    * @returns Detailed schema for the external type or null if cannot be resolved
    * @private
    */
-  private extractPropertiesFromExternalType({
-    type,
-    property,
-    typeName,
-  }: {
-    type: ts.Type
-    property: ts.PropertyDeclaration
-    typeName: string
-  }): SchemaType | null {
+  private extractSchemaFromExternalType(type: ts.Type): SchemaType | null {
     try {
       // Get the symbol for the type
       const symbol = type.getSymbol()
@@ -1256,11 +1243,7 @@ class SchemaTransformer {
         return null
       }
 
-      // Check if this is a class or interface with properties
-      const properties: { [key: string]: any } = {}
-      const required: string[] = []
-
-      // Get the properties of the type
+      const properties: PropertyInfo[] = []
       const typeProperties = this.checker.getPropertiesOfType(type)
 
       for (const prop of typeProperties) {
@@ -1271,59 +1254,29 @@ class SchemaTransformer {
           continue
         }
 
-        // Get the type of this property
-        const propType = this.checker.getTypeOfSymbolAtLocation(prop, property)
-        const propTypeString = this.checker.typeToString(propType)
-
-        // Skip function types for now (methods)
-        if (
-          propTypeString.includes('=>') ||
-          propTypeString.includes('function')
-        ) {
-          continue
-        }
-
-        // Map the property type to OpenAPI schema
-        const mappedType = this.mapPrimitiveType(propTypeString)
-        properties[propName] = mappedType
-
-        // Check if the property is optional
         const propDeclaration = prop.valueDeclaration
-        const isOptional =
-          propDeclaration &&
-          ts.isPropertyDeclaration(propDeclaration) &&
-          !!propDeclaration.questionToken
 
-        if (!isOptional) {
-          required.push(propName)
+        if (propDeclaration && ts.isPropertyDeclaration(propDeclaration)) {
+          const propertyName = prop.name
+          const type = this.getPropertyType(propDeclaration)
+          const decorators = this.extractDecorators(propDeclaration)
+          const isOptional = !!propDeclaration.questionToken
+          const isGeneric = this.isPropertyTypeGeneric(propDeclaration)
+          const isPrimitive = this.isPrimitiveType(type)
+
+          properties.push({
+            name: propertyName,
+            type,
+            decorators,
+            isOptional,
+            isGeneric,
+            originalProperty: propDeclaration,
+            isPrimitive,
+          })
         }
       }
 
-      // Only return a schema if we found some properties
-      if (Object.keys(properties).length > 0) {
-        if (
-          typeName.endsWith('[]') ||
-          typeName.startsWith('Array<') ||
-          typeName === 'array'
-        ) {
-          return {
-            type: 'array',
-            items: {
-              type: 'object',
-              properties,
-              required,
-            },
-          }
-        } else {
-          return {
-            type: 'object',
-            properties,
-            required,
-          }
-        }
-      }
-
-      return null
+      return this.generateSchema(properties)
     } catch (error) {
       console.warn('Failed to extract properties from external type:', error)
       return null

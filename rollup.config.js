@@ -11,6 +11,7 @@ const external = [
   'path',
   'node:test',
   'node:assert',
+  'socket.io',
 ]
 const plugins = {
   commonJs: [typescript({ rootDir: 'src', outDir: 'dist' })],
