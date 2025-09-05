@@ -1,4 +1,5 @@
 import './enhanced-generic-detection.test'
+import './advanced-circular-reference.test'
 /* import './main.test'
 import './integration.test'
 import './plain.test'

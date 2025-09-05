@@ -1191,10 +1191,27 @@ class SchemaTransformer {
         )
 
         if (parseClass) {
+          const className = parseClass.name?.text || 'UnknownClass'
+          const sourceFile = parseClass.getSourceFile()
+          const fileName = sourceFile.fileName
+          const cacheKey = `${fileName}:${className}`
+
+          // Use the same circular reference detection mechanism as transform
+          if (this.processingClasses.has(cacheKey)) {
+            // To prevent infinite recursion in circular references, use a $ref
+            schema.properties[property.name] = {
+              $ref: `#/components/schemas/${className}`,
+              description: `Reference to ${property.type} (circular reference detected)`,
+            }
+
+            continue
+          }
+
+          // Also check the local classesGenerated set for additional protection
           if (classesGenerated.has(parseClass)) {
             // To prevent infinite recursion in circular references, use a $ref
             schema.properties[property.name] = {
-              $ref: `#/components/schemas/${parseClass.name?.text}`,
+              $ref: `#/components/schemas/${className}`,
               description: `Reference to ${property.type} (circular reference detected)`,
             }
 
@@ -1202,12 +1219,17 @@ class SchemaTransformer {
           }
 
           classesGenerated.add(parseClass)
+          this.processingClasses.add(cacheKey)
 
-          schema.properties[property.name] = this.getSchemaFromClass({
-            parseClass,
-            typeName: property.type,
-            classesGenerated,
-          })
+          try {
+            schema.properties[property.name] = this.getSchemaFromClass({
+              parseClass,
+              typeName: property.type,
+              classesGenerated,
+            })
+          } finally {
+            this.processingClasses.delete(cacheKey)
+          }
         }
       }
 
@@ -1234,8 +1256,6 @@ class SchemaTransformer {
       schema.type = 'object'
       schema.additionalProperties = true
     }
-
-    classesGenerated.clear()
 
     return schema
   }
