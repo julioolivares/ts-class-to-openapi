@@ -4,7 +4,7 @@ type Property = { [key: string]: any } & { type: string }
 // Support for both regular schemas and $ref schemas (OpenAPI 3.1)
 type SchemaType =
   | ({ [key: string]: any } & {
-      properties: { [key: string]: any }
+      properties: { [key: string]: any } & { additionalProperties?: boolean }
     } & { required: string[] } & { type: string })
   | ({ [key: string]: any } & {
       $ref: string

@@ -588,7 +588,11 @@ class SchemaTransformer {
   } {
     const className = classNode.name?.text || 'Unknown'
     const properties = this.getPropertiesByClass(classNode)
-    const schema = this.generateSchema(properties, sourceFile?.fileName)
+    const schema = this.generateSchema({
+      properties,
+      typeName: 'object',
+      contextFilePath: sourceFile?.fileName as string,
+    })
 
     return { name: className, schema }
   }
@@ -1113,10 +1117,15 @@ class SchemaTransformer {
    * @returns Complete OpenAPI schema object with properties and validation rules
    * @private
    */
-  private generateSchema(
-    properties: PropertyInfo[],
+  private generateSchema({
+    properties,
+    contextFilePath,
+    typeName,
+  }: {
+    properties: PropertyInfo[]
     contextFilePath?: string
-  ): SchemaType {
+    typeName?: string
+  }): SchemaType {
     const schema: SchemaType = {
       type: 'object',
       properties: {},
@@ -1128,13 +1137,14 @@ class SchemaTransformer {
         property.originalProperty
       )
 
-      schema.properties[property.name] = {}
+      schema.properties[property.name] = { type: 'object' }
       // Handle primitive types
       if (property.isPrimitive) {
-        this.applySchemaForPrimitiveTypes(property, schema)
+        schema.properties[property.name] =
+          this.getSchemaForPrimitiveType(property)
       } else if (this.isUtilityType(typeSymbol, property.type)) {
         schema.properties[property.name] =
-          this.generateSchemaForUtilityType(typeSymbol)
+          this.getSchemaForUtilityType(typeSymbol)
       }
       // Generic Types
       else if (property.isGeneric) {
@@ -1150,28 +1160,49 @@ class SchemaTransformer {
             continue
           }
         } else {
-          schema.properties[property.name] = { type }
+          schema.properties[property.name] = { type, properties: {} }
           if (format) schema.properties[property.name].format = format
         }
       }
       // Handle external types
       else if (this.isExternalType(typeSymbol)) {
         schema.properties[property.name] =
-          this.extractSchemaFromExternalType(typeSymbol) || {}
+          this.getSchemaFromExternalType(typeSymbol, property.type) || {}
       }
       // Handle internal types
       else {
         const parseClass = this.getClassNodeFromType(typeSymbol)
 
         if (parseClass) {
-          schema.properties[property.name] =
-            this.generateSchemaFromClass(parseClass)
+          schema.properties[property.name] = this.getSchemaFromClass(
+            parseClass,
+            property.type
+          )
         }
       }
 
       this.determineRequiredStatus(property, schema)
 
       this.applyDecorators(property.decorators, schema, property.name)
+    }
+
+    if (typeName?.endsWith('[]') || typeName?.startsWith('Array<')) {
+      schema.type = 'array'
+      schema.items = {
+        type: 'object',
+        properties: schema.properties,
+        required: schema.required,
+      }
+
+      //@ts-ignore
+      delete schema.properties
+      //@ts-ignore
+      delete schema.required
+    }
+
+    if (schema.properties && Object.keys(schema.properties).length === 0) {
+      schema.type = 'object'
+      schema.additionalProperties = true
     }
 
     return schema
@@ -1182,9 +1213,9 @@ class SchemaTransformer {
    * @param parseClass
    * @returns
    */
-  generateSchemaFromClass(parseClass: ts.ClassDeclaration) {
+  getSchemaFromClass(parseClass: ts.ClassDeclaration, typeName?: string) {
     const properties = this.getPropertiesByClass(parseClass)
-    return this.generateSchema(properties)
+    return this.generateSchema({ properties, typeName: typeName as string })
   }
 
   /**
@@ -1234,7 +1265,10 @@ class SchemaTransformer {
    * @returns Detailed schema for the external type or null if cannot be resolved
    * @private
    */
-  private extractSchemaFromExternalType(type: ts.Type): SchemaType | null {
+  private getSchemaFromExternalType(
+    type: ts.Type,
+    typeName: string
+  ): SchemaType | null {
     try {
       // Get the symbol for the type
       const symbol = type.getSymbol()
@@ -1275,7 +1309,7 @@ class SchemaTransformer {
         }
       }
 
-      return this.generateSchema(properties)
+      return this.generateSchema({ properties, typeName })
     } catch (error) {
       console.warn('Failed to extract properties from external type:', error)
       return null
@@ -1430,7 +1464,7 @@ class SchemaTransformer {
 
       // Handle generic utility types (Partial<T>, Required<T>, etc.)
       if (this.isUtilityType(type, property.type)) {
-        const schema = this.generateSchemaForUtilityType(type)
+        const schema = this.getSchemaForUtilityType(type)
         return { type: 'object', nestedSchema: schema }
       }
 
@@ -1562,7 +1596,7 @@ class SchemaTransformer {
    * @returns Object containing OpenAPI type, optional format, and nested schema
    * @private
    */
-  private generateSchemaForUtilityType(type: ts.Type): SchemaType {
+  private getSchemaForUtilityType(type: ts.Type): SchemaType {
     if (
       !type.aliasSymbol ||
       !type.aliasTypeArguments ||
@@ -1603,7 +1637,7 @@ class SchemaTransformer {
         }
       })
 
-      let schema = this.generateSchema(properties)
+      let schema = this.generateSchema({ properties })
 
       if (aliasName === constants.tsUtilityTypes.Partial.type) {
         schema.required = []
@@ -1987,15 +2021,7 @@ class SchemaTransformer {
    * @param schema - The schema object to modify
    * @private
    */
-  private applySchemaForPrimitiveTypes(
-    property: PropertyInfo,
-    schema: SchemaType
-  ): void {
-    // Skip applying type-based formats to $ref schemas
-    if (this.isRefSchema(schema)) {
-      return
-    }
-
+  private getSchemaForPrimitiveType(property: PropertyInfo): Property | void {
     const propertyType = property.type.toLowerCase()
 
     const propertySchema = {} as Property
@@ -2038,7 +2064,7 @@ class SchemaTransformer {
         propertySchema.type = constants.jsPrimitives.String.value
     }
 
-    schema.properties[property.name] = propertySchema
+    return propertySchema
   }
 
   /**
@@ -2098,6 +2124,7 @@ class SchemaTransformer {
     if (visitedTypes.has(type)) {
       return undefined
     }
+
     visitedTypes.add(type)
 
     // First check if it's an array type
