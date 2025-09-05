@@ -17,6 +17,7 @@ class GenericTestEntity<T> {
 
 class ComplexGenericEntity {
   id: number
+  alias: string[]
   partialData: Partial<Data>
   requiredData: Required<Data>
   pickedData: Pick<Data, 'name' | 'value'>
@@ -45,13 +46,12 @@ describe('Enhanced Generic Type Detection', () => {
       // This would be tested through property analysis
       // since isGenericTypeFromNode is private
       const result = transformer.transform(ComplexGenericEntity)
-      console.log(JSON.stringify(result.schema, null, 2))
       assert.strictEqual(result.name, 'ComplexGenericEntity')
       assert.strictEqual(result.schema.type, 'object')
       assert.ok(result.schema.properties)
     })
   })
-  /* 
+
   describe('isPropertyTypeGeneric', () => {
     test('should correctly identify generic properties in schema generation', () => {
       const result = transformer.transform(ComplexGenericEntity)
@@ -160,5 +160,5 @@ describe('Enhanced Generic Type Detection', () => {
         transformer.clearCache()
       })
     })
-  }) */
+  })
 })

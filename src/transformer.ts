@@ -648,7 +648,7 @@ class SchemaTransformer {
     }
 
     const type = this.checker.getTypeAtLocation(property)
-    return this.checker.typeToString(type)
+    return this.getStringFromType(type)
   }
 
   /**
@@ -669,7 +669,7 @@ class SchemaTransformer {
 
     // Try to resolve the type using the TypeScript type checker
     const type = this.checker.getTypeAtLocation(typeNode)
-    const resolvedType = this.checker.typeToString(type)
+    const resolvedType = this.getStringFromType(type)
 
     // If we can resolve it to a meaningful structure, use that
     if (
@@ -1121,10 +1121,12 @@ class SchemaTransformer {
     properties,
     contextFilePath,
     typeName,
+    classesGenerated = new Set<any>(),
   }: {
     properties: PropertyInfo[]
     contextFilePath?: string
     typeName?: string
+    classesGenerated?: Set<any>
   }): SchemaType {
     const schema: SchemaType = {
       type: 'object',
@@ -1137,12 +1139,14 @@ class SchemaTransformer {
         property.originalProperty
       )
 
-      schema.properties[property.name] = { type: 'object' }
-      // Handle primitive types
+      schema.properties[property.name] = {}
+
       if (property.isPrimitive) {
         schema.properties[property.name] =
           this.getSchemaForPrimitiveType(property)
-      } else if (this.isUtilityType(typeSymbol, property.type)) {
+      }
+      // Utility Types (Partial, and Required only supported)
+      else if (this.isUtilityType(typeSymbol, property.type)) {
         schema.properties[property.name] =
           this.getSchemaForUtilityType(typeSymbol)
       }
@@ -1165,19 +1169,45 @@ class SchemaTransformer {
         }
       }
       // Handle external types
-      else if (this.isExternalType(typeSymbol)) {
+      else if (this.isExternalType(typeSymbol, property.type)) {
         schema.properties[property.name] =
           this.getSchemaFromExternalType(typeSymbol, property.type) || {}
       }
+      // Handle any/unknown types
+      else if (this.isAnyType(property.type)) {
+        if (this.isArrayType(property.type)) {
+          schema.properties[property.name] = {
+            type: 'array',
+            items: {},
+          }
+        }
+      }
       // Handle internal types
       else {
-        const parseClass = this.getClassNodeFromType(typeSymbol)
+        const parseClass = this.getClassNodeFromType(
+          typeSymbol,
+          new Set<ts.Type>(),
+          property.type
+        )
 
         if (parseClass) {
-          schema.properties[property.name] = this.getSchemaFromClass(
+          if (classesGenerated.has(parseClass)) {
+            // To prevent infinite recursion in circular references, use a $ref
+            schema.properties[property.name] = {
+              $ref: `#/components/schemas/${parseClass.name?.text}`,
+              description: `Reference to ${property.type} (circular reference detected)`,
+            }
+
+            continue
+          }
+
+          classesGenerated.add(parseClass)
+
+          schema.properties[property.name] = this.getSchemaFromClass({
             parseClass,
-            property.type
-          )
+            typeName: property.type,
+            classesGenerated,
+          })
         }
       }
 
@@ -1205,7 +1235,18 @@ class SchemaTransformer {
       schema.additionalProperties = true
     }
 
+    classesGenerated.clear()
+
     return schema
+  }
+
+  private isAnyType(type: string) {
+    return (
+      type === 'any' ||
+      type === 'unknown' ||
+      type.endsWith('any[]') ||
+      type.endsWith('unknown[]')
+    )
   }
 
   /**
@@ -1213,9 +1254,21 @@ class SchemaTransformer {
    * @param parseClass
    * @returns
    */
-  getSchemaFromClass(parseClass: ts.ClassDeclaration, typeName?: string) {
+  getSchemaFromClass({
+    parseClass,
+    typeName,
+    classesGenerated = new Set<any>(),
+  }: {
+    parseClass: ts.ClassDeclaration
+    typeName?: string
+    classesGenerated?: Set<any>
+  }) {
     const properties = this.getPropertiesByClass(parseClass)
-    return this.generateSchema({ properties, typeName: typeName as string })
+    return this.generateSchema({
+      properties,
+      typeName: typeName as string,
+      classesGenerated,
+    })
   }
 
   /**
@@ -1225,9 +1278,9 @@ class SchemaTransformer {
    * @returns True if the node is of an external type
    * @private
    */
-  private isExternalType(type: ts.Type): boolean {
+  private isExternalType(type: ts.Type, typeName: string): boolean {
     // For arrays, check if the element type is external, not the array itself
-    if (this.isArrayType(type)) {
+    if (this.isArrayType(typeName)) {
       const elementType = this.getArrayElementType(type)
       if (elementType) {
         return this.isExternalTypeFromType(elementType)
@@ -1443,7 +1496,7 @@ class SchemaTransformer {
       const type = this.checker.getTypeAtLocation(property.originalProperty)
 
       // Handle arrays with generic element types
-      if (this.isArrayType(type)) {
+      if (this.isArrayType(property.type)) {
         const elementType = this.getArrayElementType(type)
         if (elementType) {
           const elementSchema = this.mapTypeFromTSType(
@@ -1497,7 +1550,7 @@ class SchemaTransformer {
     format?: string
     nestedSchema?: SchemaType
   } {
-    const typeString = this.checker.typeToString(type)
+    const typeString = this.getStringFromType(type)
 
     // Check for primitive types first
     if (type.flags & ts.TypeFlags.String) {
@@ -1536,6 +1589,10 @@ class SchemaTransformer {
     return { type: 'object' }
   }
 
+  private getStringFromType(type: ts.Type) {
+    return this.checker.typeToString(type)
+  }
+
   /**
    * Checks if a TypeScript Type represents an array type.
    *
@@ -1543,16 +1600,8 @@ class SchemaTransformer {
    * @returns True if it's an array type
    * @private
    */
-  private isArrayType(type: ts.Type): boolean {
-    const symbol = type.getSymbol()
-    if (symbol) {
-      const name = symbol.getName()
-      if (name === 'Array') return true
-    }
-
-    // Check if it has a number index signature (array-like)
-    const numberIndexType = type.getNumberIndexType()
-    return numberIndexType !== undefined
+  private isArrayType(typeName: string): boolean {
+    return typeName.endsWith('[]') || typeName.startsWith('Array<')
   }
 
   /**
@@ -2022,9 +2071,10 @@ class SchemaTransformer {
    * @private
    */
   private getSchemaForPrimitiveType(property: PropertyInfo): Property | void {
-    const propertyType = property.type.toLowerCase()
-
     const propertySchema = {} as Property
+    const isArray = this.isArrayType(property.type)
+    const propertyType = property.type.toLowerCase().replace('[]', '').trim()
+
     switch (propertyType) {
       case constants.jsPrimitives.String.value:
         propertySchema.type = constants.jsPrimitives.String.value
@@ -2062,6 +2112,11 @@ class SchemaTransformer {
         break
       default:
         propertySchema.type = constants.jsPrimitives.String.value
+    }
+
+    if (isArray) {
+      propertySchema.type = `array`
+      propertySchema.items = { type: propertyType }
     }
 
     return propertySchema
@@ -2118,7 +2173,8 @@ class SchemaTransformer {
    */
   private getClassNodeFromType(
     type: ts.Type,
-    visitedTypes = new Set<ts.Type>()
+    visitedTypes = new Set<ts.Type>(),
+    typeName?: string
   ): ts.ClassDeclaration | undefined {
     // Prevent infinite recursion
     if (visitedTypes.has(type)) {
@@ -2128,7 +2184,7 @@ class SchemaTransformer {
     visitedTypes.add(type)
 
     // First check if it's an array type
-    if (this.isArrayType(type)) {
+    if (typeName && this.isArrayType(typeName)) {
       const elementType = this.getArrayElementType(type)
       if (elementType) {
         // Recursively call with the element type
@@ -2151,7 +2207,9 @@ class SchemaTransformer {
     }
 
     return undefined
-  } /**
+  }
+
+  /**
    * Gets the class declaration node from a property's type.
    *
    * @param property - The property declaration
@@ -2159,10 +2217,11 @@ class SchemaTransformer {
    * @private
    */
   private getClassNodeFromProperty(
-    property: ts.PropertyDeclaration
+    property: ts.PropertyDeclaration,
+    typeName: string
   ): ts.ClassDeclaration | undefined {
     const type = this.checker.getTypeAtLocation(property)
-    return this.getClassNodeFromType(type)
+    return this.getClassNodeFromType(type, new Set(), typeName)
   }
 
   /**
@@ -2176,7 +2235,8 @@ class SchemaTransformer {
    */
   private getClassInfoFromType(
     type: ts.Type,
-    visitedTypes = new Set<ts.Type>()
+    visitedTypes = new Set<ts.Type>(),
+    typeName: string
   ): {
     classNode: ts.ClassDeclaration | undefined
     sourceFile: ts.SourceFile | undefined
@@ -2198,7 +2258,7 @@ class SchemaTransformer {
     let actualType = type
 
     // Check if it's an array type
-    if (this.isArrayType(type)) {
+    if (this.isArrayType(typeName)) {
       isArray = true
       const elementType = this.getArrayElementType(type)
       if (elementType) {

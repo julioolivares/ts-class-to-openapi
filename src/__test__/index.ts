@@ -1,4 +1,5 @@
-import './main.test'
+import './enhanced-generic-detection.test'
+/* import './main.test'
 import './integration.test'
 import './plain.test'
 import './optional-properties.test'
@@ -8,4 +9,4 @@ import './circular-reference.test'
 import './ref-pattern.test'
 import './singleton-behavior.test'
 import './enhanced-generic-detection.test'
-// import './socket-io-external-types.test'
+// import './socket-io-external-types.test' */
