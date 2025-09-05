@@ -1124,18 +1124,17 @@ class SchemaTransformer {
     }
 
     for (const property of properties) {
-      // Try to extract detailed schema from external type first if we have the original property
-      let externalSchema: SchemaType | null = null
       const typeSymbol = this.checker.getTypeAtLocation(
         property.originalProperty
       )
 
       schema.properties[property.name] = {}
-
+      // Handle primitive types
       if (property.isPrimitive) {
         this.applySchemaForPrimitiveTypes(property, schema)
-      } else if (this.isUtilityType(typeSymbol)) {
-        const utilitySchema = this.handleUtilityType(typeSymbol)
+      } else if (this.isUtilityType(typeSymbol, property.type)) {
+        schema.properties[property.name] =
+          this.generateSchemaForUtilityType(typeSymbol)
       }
       // Generic Types
       else if (property.isGeneric) {
@@ -1154,14 +1153,14 @@ class SchemaTransformer {
           schema.properties[property.name] = { type }
           if (format) schema.properties[property.name].format = format
         }
-      } else if (this.isExternalType(typeSymbol)) {
-        externalSchema = this.extractSchemaFromExternalType(typeSymbol)
-
-        if (externalSchema) {
-          // Use the detailed external schema
-          schema.properties[property.name] = externalSchema
-        }
-      } else {
+      }
+      // Handle external types
+      else if (this.isExternalType(typeSymbol)) {
+        schema.properties[property.name] =
+          this.extractSchemaFromExternalType(typeSymbol) || {}
+      }
+      // Handle internal types
+      else {
         const parseClass = this.getClassNodeFromType(typeSymbol)
 
         if (parseClass) {
@@ -1281,48 +1280,6 @@ class SchemaTransformer {
       console.warn('Failed to extract properties from external type:', error)
       return null
     }
-  }
-
-  /**
-   * Maps a TypeScript type string to a simple OpenAPI type.
-   * Used for mapping individual properties from external types.
-   *
-   * @param typeString - The TypeScript type string
-   * @returns OpenAPI property schema
-   * @private
-   */
-  private mapPrimitiveType(typeString: string): {
-    type: string
-    format?: string
-  } {
-    const lowerType = typeString.toLowerCase()
-
-    // Handle arrays
-    if (typeString.endsWith('[]')) {
-      const elementType = typeString.slice(0, -2)
-      const elementSchema = this.mapPrimitiveType(elementType)
-      return {
-        type: 'array',
-        items: elementSchema,
-      } as any
-    }
-
-    // Handle primitives
-    if (lowerType.includes('string')) {
-      return { type: 'string' }
-    }
-    if (lowerType.includes('number') || lowerType.includes('integer')) {
-      return { type: 'number' }
-    }
-    if (lowerType.includes('boolean')) {
-      return { type: 'boolean' }
-    }
-    if (lowerType.includes('date')) {
-      return { type: 'string', format: 'date-time' }
-    }
-
-    // For complex types, fallback to object
-    return { type: 'object' }
   }
 
   /**
@@ -1472,8 +1429,9 @@ class SchemaTransformer {
       }
 
       // Handle generic utility types (Partial<T>, Required<T>, etc.)
-      if (this.isUtilityType(type)) {
-        return this.handleUtilityType(type, contextFilePath)
+      if (this.isUtilityType(type, property.type)) {
+        const schema = this.generateSchemaForUtilityType(type)
+        return { type: 'object', nestedSchema: schema }
       }
 
       // Handle other generic types
@@ -1587,14 +1545,12 @@ class SchemaTransformer {
    * @returns True if it's a utility type
    * @private
    */
-  private isUtilityType(type: ts.Type): boolean {
+  private isUtilityType(type: ts.Type, typeName: string): boolean {
     if (!type.aliasSymbol) return false
 
-    const aliasName = type.aliasSymbol.getName()
-
     return (
-      aliasName.startsWith(constants.tsUtilityTypes.Partial.value) ||
-      aliasName.startsWith(constants.tsUtilityTypes.Required.value)
+      typeName.startsWith(constants.tsUtilityTypes.Partial.value) ||
+      typeName.startsWith(constants.tsUtilityTypes.Required.value)
     )
   }
 
@@ -1606,57 +1562,59 @@ class SchemaTransformer {
    * @returns Object containing OpenAPI type, optional format, and nested schema
    * @private
    */
-  private handleUtilityType(
-    type: ts.Type,
-    contextFilePath?: string
-  ): {
-    type: string
-    format?: string
-    nestedSchema?: SchemaType
-  } {
+  private generateSchemaForUtilityType(type: ts.Type): SchemaType {
     if (
       !type.aliasSymbol ||
       !type.aliasTypeArguments ||
       type.aliasTypeArguments.length === 0
     ) {
-      return { type: 'object' }
+      return { type: 'object', properties: {}, required: [] }
     }
 
     const aliasName = type.aliasSymbol.getName()
     const baseType = type.aliasTypeArguments[0]
 
-    if (!baseType) {
-      return { type: 'object' }
+    if (!baseType || !baseType.isClass()) {
+      return { type: 'object', properties: {}, required: [] }
     }
 
-    const baseTypeString = this.checker.typeToString(baseType)
-
     try {
-      const baseSchema = this.transformByName(baseTypeString, contextFilePath)
-      const schema = { ...baseSchema.schema }
+      const properties: PropertyInfo[] = []
+      baseType.getProperties().forEach(property => {
+        const declaration = property?.valueDeclaration as ts.PropertyDeclaration
 
-      // Modify the schema based on the utility type
-      switch (aliasName) {
-        case 'Partial':
-          // All properties become optional
-          schema.required = []
-          break
-        case 'Required':
-          // All properties become required
-          if (schema.properties) {
-            schema.required = Object.keys(schema.properties)
-          }
-          break
-        // Add more utility type handling as needed
+        if (declaration && ts.isPropertyDeclaration(declaration as ts.Node)) {
+          const propertyName = declaration.name.getText()
+          const type = this.getPropertyType(declaration)
+          const decorators = this.extractDecorators(declaration)
+          const isOptional = !!declaration.questionToken
+          const isGeneric = this.isPropertyTypeGeneric(declaration)
+          const isPrimitive = this.isPrimitiveType(type)
+
+          properties.push({
+            name: propertyName,
+            type,
+            decorators,
+            isOptional,
+            isGeneric,
+            originalProperty: declaration,
+            isPrimitive,
+          })
+        }
+      })
+
+      let schema = this.generateSchema(properties)
+
+      if (aliasName === constants.tsUtilityTypes.Partial.type) {
+        schema.required = []
+      } else {
+        schema.required = Object.keys(schema.properties)
       }
 
-      return {
-        type: 'object',
-        nestedSchema: schema,
-      }
+      return schema
     } catch (error) {
       console.warn(`Error handling utility type ${aliasName}:`, error)
-      return { type: 'object' }
+      return { type: 'object', properties: {}, required: [] }
     }
   }
 

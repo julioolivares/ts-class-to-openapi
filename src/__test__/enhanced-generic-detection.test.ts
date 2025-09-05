@@ -18,8 +18,8 @@ class GenericTestEntity<T> {
 class ComplexGenericEntity {
   id: number
   partialData: Partial<Data>
-  /*requiredData: Required<Data>
-  pickedData: Pick<Data, 'name' | 'value'> */
+  requiredData: Required<Data>
+  pickedData: Pick<Data, 'name' | 'value'>
   arrayData: Data[]
   recordData: Data
   server: Server
