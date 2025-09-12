@@ -41,8 +41,14 @@ interface PropertyInfo {
   /** Whether the property type is a primitive type */
   isPrimitive: boolean
 
+  /** Whether the property type is a class type */
+  isClassType?: boolean
+
+  /** Whether the property type is an array type */
+  isArray?: boolean
+
   /** The original TypeScript property declaration (optional) */
-  originalProperty: ts.Node
+  originalProperty: ts.PropertyDeclaration
 }
 
 /**
