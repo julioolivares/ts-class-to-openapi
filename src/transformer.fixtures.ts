@@ -13,6 +13,8 @@ const TS_CONFIG_DEFAULT_PATH = path.resolve(process.cwd(), 'tsconfig.json')
 
 const jsPrimitives = {
   String: { type: 'String', value: 'string' },
+  Any: { type: 'Any', value: 'string' },
+  Unknown: { type: 'Unknown', value: 'string' },
   Number: { type: 'Number', value: 'number', format: 'double' },
   Boolean: { type: 'Boolean', value: 'boolean' },
   Symbol: { type: 'Symbol', value: 'string' },

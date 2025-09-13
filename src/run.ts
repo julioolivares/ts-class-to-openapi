@@ -1,5 +1,5 @@
 import { transform } from './transformer2.0.js'
-
+import { Server } from 'socket.io'
 class User {
   id: number
   name: string
@@ -8,7 +8,8 @@ class User {
   tags: string[]
   roles: Role[]
   mainRole: Role
-  // actionRoles: ActionRole[]
+  actionRoles: ActionRole[]
+  server: Server
 }
 
 class Role {

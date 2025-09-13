@@ -1,13 +1,14 @@
 import ts from 'typescript'
 import {
   DecoratorInfo,
+  Property,
   PropertyInfo,
   SchemaType,
   TransformerOptions,
 } from './types'
 import { constants } from './transformer.fixtures'
 
-export class Transformer2 {
+class Transformer2 {
   private static instance: Transformer2 | null | undefined = null
 
   private program: ts.Program
@@ -416,6 +417,8 @@ export class Transformer2 {
       constants.jsPrimitives.null.type.toLowerCase(),
       constants.jsPrimitives.Object.type.toLowerCase(),
       constants.jsPrimitives.Array.type.toLowerCase(),
+      constants.jsPrimitives.Any.type.toLowerCase(),
+      constants.jsPrimitives.Unknown.type.toLowerCase(),
     ]
 
     const primitivesArray = primitiveTypes.map(t => t.concat('[]'))
@@ -437,15 +440,31 @@ export class Transformer2 {
   }
 
   private getSourceFileByClassName(
-    className: string
+    className: string,
+    sourceOptions?: {
+      isExternal: boolean
+      packageName: string
+      filePath?: string
+    }
   ): { sourceFile: ts.SourceFile; node: ts.ClassDeclaration } | undefined {
-    const sourceFiles = this.program.getSourceFiles().filter(sf => {
-      if (sf.isDeclarationFile) return false
-      if (sf.fileName.includes('.d.ts')) return false
-      if (sf.fileName.includes('node_modules')) return false
+    let sourceFiles: ts.SourceFile[] = []
 
-      return true
-    })
+    if (sourceOptions?.isExternal) {
+      sourceFiles = this.program.getSourceFiles().filter(sf => {
+        return (
+          sf.fileName.includes(sourceOptions.packageName) &&
+          (!sourceOptions.filePath || sf.fileName === sourceOptions.filePath)
+        )
+      })
+    } else {
+      sourceFiles = this.program.getSourceFiles().filter(sf => {
+        if (sf.isDeclarationFile) return false
+        if (sf.fileName.includes('.d.ts')) return false
+        if (sf.fileName.includes('node_modules')) return false
+
+        return true
+      })
+    }
 
     for (const sourceFile of sourceFiles) {
       let node: ts.ClassDeclaration | undefined
@@ -547,8 +566,90 @@ export class Transformer2 {
     return ts.isArrayTypeNode(propertyDeclaration.type)
   }
 
-  public transform(cls: Function): { name: string; schema: SchemaType } {
-    const result = this.getSourceFileByClassName(cls.name)
+  private getSchemaFromProperties(
+    properties: PropertyInfo[]
+  ): Record<string, Property> {
+    let schema: Record<string, Property> = {}
+
+    for (const property of properties) {
+      schema[property.name] = this.getSchemaFromProperty(property)
+    }
+
+    return schema
+  }
+
+  private getSchemaFromProperty(property: PropertyInfo): Property {
+    const schema: Property = {} as Property
+
+    if (property.isPrimitive) {
+      schema.properties[property.name] = this.getSchemaFromPrimitive(property)
+    }
+
+    return schema
+  }
+
+  private getSchemaFromPrimitive(property: PropertyInfo): Property {
+    const propertySchema = { type: 'object' } as Property
+    const propertyType = property.type.toLowerCase().replace('[]', '').trim()
+
+    switch (propertyType) {
+      case constants.jsPrimitives.String.value:
+        propertySchema.type = constants.jsPrimitives.String.value
+        break
+      case constants.jsPrimitives.Number.value:
+        propertySchema.type = constants.jsPrimitives.Number.value
+        propertySchema.format = constants.jsPrimitives.Number.format
+        break
+      case constants.jsPrimitives.BigInt.type.toLocaleLowerCase():
+        propertySchema.type = constants.jsPrimitives.BigInt.value
+        propertySchema.format = constants.jsPrimitives.BigInt.format
+        break
+      case constants.jsPrimitives.Date.value:
+        propertySchema.type = constants.jsPrimitives.Date.value
+        propertySchema.format = constants.jsPrimitives.Date.format
+        break
+      case constants.jsPrimitives.Buffer.value:
+      case constants.jsPrimitives.Uint8Array.value:
+      case constants.jsPrimitives.File.value:
+      case constants.jsPrimitives.UploadFile.value:
+        propertySchema.type = constants.jsPrimitives.UploadFile.value
+        propertySchema.format = constants.jsPrimitives.UploadFile.format
+        break
+      case constants.jsPrimitives.Array.value:
+        propertySchema.type = constants.jsPrimitives.Array.value
+        break
+      case constants.jsPrimitives.Boolean.value:
+        propertySchema.type = constants.jsPrimitives.Boolean.value
+        break
+      case constants.jsPrimitives.Symbol.type.toLocaleLowerCase():
+        propertySchema.type = constants.jsPrimitives.Symbol.value
+        break
+      case constants.jsPrimitives.Object.value:
+        propertySchema.type = constants.jsPrimitives.Object.value
+        break
+      default:
+        propertySchema.type = constants.jsPrimitives.String.value
+    }
+
+    if (property.isArray) {
+      propertySchema.type = `array`
+      propertySchema.items = { type: propertyType }
+    }
+
+    return propertySchema
+  }
+
+  public transform(
+    cls: Function,
+    sourceOptions?: {
+      isExternal: boolean
+      packageName: string
+      filePath?: string
+    }
+  ): { name: string; schema: SchemaType } {
+    let schema: SchemaType = { type: 'object', properties: {} }
+
+    const result = this.getSourceFileByClassName(cls.name, sourceOptions)
 
     if (!result?.sourceFile) {
       console.warn(`Class ${cls.name} not found in any source file.`)
@@ -557,7 +658,11 @@ export class Transformer2 {
 
     const properties = this.getPropertiesByClassDeclaration(result.node)
 
-    return { name: '', schema: properties as unknown as SchemaType }
+    schema = this.getSchemaFromProperties(properties) as SchemaType
+
+    console.log(properties)
+
+    return { name: cls.name, schema }
   }
 }
 
@@ -570,5 +675,5 @@ export function transform<T>(
 } {
   // Use the singleton instance instead of creating a temporary one
   const transformer = Transformer2.getInstance(undefined, options)
-  return transformer.transform(cls)
+  return transformer.transform(cls, options?.sourceOptions)
 }

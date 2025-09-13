@@ -5,7 +5,7 @@ type Property = { [key: string]: any } & { type: string }
 type SchemaType =
   | ({ [key: string]: any } & {
       properties: { [key: string]: any } & { additionalProperties?: boolean }
-    } & { required: string[] } & { type: string })
+    } & { required?: string[] } & { type: string })
   | ({ [key: string]: any } & {
       $ref: string
     })
@@ -60,6 +60,25 @@ interface TransformerOptions {
   maxCacheSize?: number
   /** Whether to automatically clean up cache (default: true) */
   autoCleanup?: boolean
+
+  /** Options related to the source of the class being transformed */
+  sourceOptions?:
+    | {
+        /** Whether the class is from an external module */
+        isExternal: true
+        /** The package name (required when isExternal is true) */
+        packageName: string
+        /** The file path of the class being transformed */
+        filePath?: string
+      }
+    | {
+        /** Whether the class is from an external module */
+        isExternal: false
+        /** The package name (optional when isExternal is false) */
+        packageName: never
+        /** The file path of the class being transformed */
+        filePath?: string
+      }
 }
 
 export {
