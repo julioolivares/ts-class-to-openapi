@@ -1,5 +1,5 @@
 import ts from 'typescript'
-type Property = { [key: string]: any } & { type: string }
+type Property = ({ [key: string]: any } & { type: string }) | SchemaType
 
 // Support for both regular schemas and $ref schemas (OpenAPI 3.1)
 type SchemaType =

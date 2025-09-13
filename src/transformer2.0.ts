@@ -566,24 +566,103 @@ class Transformer2 {
     return ts.isArrayTypeNode(propertyDeclaration.type)
   }
 
-  private getSchemaFromProperties(
+  private getSchemaFromProperties({
+    properties,
+    visitedClass,
+    transformedSchema,
+  }: {
     properties: PropertyInfo[]
-  ): Record<string, Property> {
+    visitedClass?: Set<ts.ClassDeclaration>
+    transformedSchema?: Map<string, Property>
+  }): Record<string, Property> {
     let schema: Record<string, Property> = {}
 
     for (const property of properties) {
-      schema[property.name] = this.getSchemaFromProperty(property)
+      schema[property.name] = this.getSchemaFromProperty({
+        property,
+        visitedClass,
+        transformedSchema,
+      })
+    }
+
+    return { type: 'object', properties: schema } as SchemaType
+  }
+
+  private getSchemaFromProperty({
+    property,
+    visitedClass,
+    transformedSchema,
+  }: {
+    property: PropertyInfo
+    visitedClass?: Set<ts.ClassDeclaration> | undefined
+    transformedSchema?: Map<string, Property> | undefined
+  }): Property {
+    let schema: Property = {} as Property
+
+    if (property.isPrimitive) {
+      schema = this.getSchemaFromPrimitive(property)
+    } else if (property.isClassType) {
+      schema = this.getSchemaFromClass({
+        property,
+        visitedClass,
+        transformedSchema,
+      })
     }
 
     return schema
   }
 
-  private getSchemaFromProperty(property: PropertyInfo): Property {
-    const schema: Property = {} as Property
+  private getSchemaFromClass({
+    property,
+    transformedSchema = new Map(),
+    visitedClass = new Set(),
+  }: {
+    property: PropertyInfo
+    visitedClass?: Set<ts.ClassDeclaration> | undefined
+    transformedSchema?: Map<string, Property> | undefined
+  }): Property {
+    let schema: Property = { type: 'object' } as Property
 
-    if (property.isPrimitive) {
-      schema.properties[property.name] = this.getSchemaFromPrimitive(property)
+    const declaration = this.getDeclarationProperty(property)
+
+    if (
+      !declaration ||
+      !ts.isClassDeclaration(declaration) ||
+      !declaration.name
+    ) {
+      return { type: 'object' }
     }
+
+    if (visitedClass.has(declaration)) {
+      if (transformedSchema.has(declaration.name.text)) {
+        return transformedSchema.get(declaration.name.text) as Property
+      }
+
+      return { $ref: `#/components/schemas/${declaration.name}` } as Property
+    }
+
+    visitedClass.add(declaration)
+
+    const properties = this.getPropertiesByClassDeclaration(declaration)
+
+    let transformerProps = this.getSchemaFromProperties({
+      properties,
+      visitedClass,
+      transformedSchema: transformedSchema,
+    })
+
+    // visitedClass.delete({ declaration, schema })
+
+    if (property.isArray) {
+      schema.type = 'array'
+      schema.items = { type: 'object', properties: transformerProps }
+    } else {
+      schema.type = 'object'
+      schema.properties = transformerProps
+    }
+
+    transformedSchema.set(declaration.name.text, schema)
+    // visitedClass.add({ declaration, schema })
 
     return schema
   }
@@ -653,14 +732,12 @@ class Transformer2 {
 
     if (!result?.sourceFile) {
       console.warn(`Class ${cls.name} not found in any source file.`)
-      return { name: '', schema: {} as SchemaType }
+      return { name: cls.name, schema: {} as SchemaType }
     }
 
     const properties = this.getPropertiesByClassDeclaration(result.node)
 
-    schema = this.getSchemaFromProperties(properties) as SchemaType
-
-    console.log(properties)
+    schema = this.getSchemaFromProperties({ properties }) as SchemaType
 
     return { name: cls.name, schema }
   }

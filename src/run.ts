@@ -23,4 +23,9 @@ class ActionRole {
   isActive: boolean
 }
 
-const { name, schema } = transform(User)
+const userSchema = transform(User)
+
+const roleSchema = transform(ActionRole)
+
+console.log(JSON.stringify(userSchema, null, 2))
+console.log(JSON.stringify(roleSchema, null, 2))
