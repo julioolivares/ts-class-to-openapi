@@ -651,14 +651,15 @@ class Transformer2 {
       transformedSchema: transformedSchema,
     })
 
-    // visitedClass.delete({ declaration, schema })
-
     if (property.isArray) {
       schema.type = 'array'
-      schema.items = { type: 'object', properties: transformerProps }
+      schema.items = {
+        type: transformerProps.type,
+        properties: transformerProps.properties,
+      }
     } else {
-      schema.type = 'object'
-      schema.properties = transformerProps
+      schema.type = transformerProps.type
+      schema.properties = transformerProps.properties
     }
 
     transformedSchema.set(declaration.name.text, schema)
