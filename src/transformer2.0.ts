@@ -607,6 +607,8 @@ class Transformer2 {
         visitedClass,
         transformedSchema,
       })
+    } else {
+      schema = { type: 'object', properties: {}, additionalProperties: true }
     }
 
     return schema
@@ -638,7 +640,9 @@ class Transformer2 {
         return transformedSchema.get(declaration.name.text) as Property
       }
 
-      return { $ref: `#/components/schemas/${declaration.name}` } as Property
+      return {
+        $ref: `#/components/schemas/${declaration.name.text}`,
+      } as Property
     }
 
     visitedClass.add(declaration)
@@ -663,7 +667,10 @@ class Transformer2 {
     }
 
     transformedSchema.set(declaration.name.text, schema)
-    // visitedClass.add({ declaration, schema })
+
+    if (schema.properties && Object.keys(schema.properties).length === 0) {
+      schema = { type: 'object', properties: {}, additionalProperties: true }
+    }
 
     return schema
   }
@@ -727,6 +734,7 @@ class Transformer2 {
       filePath?: string
     }
   ): { name: string; schema: SchemaType } {
+    
     let schema: SchemaType = { type: 'object', properties: {} }
 
     const result = this.getSourceFileByClassName(cls.name, sourceOptions)
