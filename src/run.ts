@@ -1,3 +1,11 @@
+import {
+  IsArray,
+  IsBoolean,
+  IsOptional,
+  IsString,
+  Length,
+} from 'class-validator'
+
 import { transform } from './transformer2.0.js'
 import { Server } from 'socket.io'
 class User {
@@ -19,13 +27,20 @@ class Role {
 
 class ActionRole {
   role: Role
+
+  @IsArray()
+  @IsOptional()
+  tags: string[]
+
+  @IsString()
+  @Length(3, 20)
   action: string
-  isActive: boolean
+  @IsBoolean()
+  isActive?: boolean
 }
 
 const userSchema = transform(User)
 
 const roleSchema = transform(ActionRole)
 
-console.log(JSON.stringify(userSchema, null, 2))
 console.log(JSON.stringify(roleSchema, null, 2))

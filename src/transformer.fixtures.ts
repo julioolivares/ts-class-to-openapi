@@ -41,6 +41,7 @@ const validatorDecorators = {
   IsDate: { name: 'IsDate', type: 'string', format: 'date-time' },
   IsEmail: { name: 'IsEmail', type: 'string', format: 'email' },
   IsNotEmpty: { name: 'IsNotEmpty' },
+  IsOptional: { name: 'IsOptional' },
   IsBoolean: { name: 'IsBoolean', type: 'boolean' },
   IsArray: { name: 'IsArray', type: 'array' },
   Min: { name: 'Min' },

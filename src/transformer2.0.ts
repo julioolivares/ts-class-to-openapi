@@ -576,6 +576,7 @@ class Transformer2 {
     transformedSchema?: Map<string, Property>
   }): Record<string, Property> {
     let schema: Record<string, Property> = {}
+    const required: string[] = []
 
     for (const property of properties) {
       schema[property.name] = this.getSchemaFromProperty({
@@ -583,9 +584,19 @@ class Transformer2 {
         visitedClass,
         transformedSchema,
       })
+
+      // this.applyDecorators(property, schema as SchemaType)
+
+      if (!property.isOptional) {
+        required.push(property.name)
+      }
     }
 
-    return { type: 'object', properties: schema } as SchemaType
+    return {
+      type: 'object',
+      properties: schema,
+      required: required.length ? required : undefined,
+    } as SchemaType
   }
 
   private getSchemaFromProperty({
@@ -612,7 +623,6 @@ class Transformer2 {
     }
 
     this.applyDecorators(property, schema as SchemaType)
-    this.setRequiredProperty(property, schema as SchemaType)
 
     return schema
   }
@@ -656,17 +666,19 @@ class Transformer2 {
       properties,
       visitedClass,
       transformedSchema: transformedSchema,
-    })
+    }) as SchemaType
 
     if (property.isArray) {
       schema.type = 'array'
       schema.items = {
         type: transformerProps.type,
         properties: transformerProps.properties,
+        required: transformerProps.required,
       }
     } else {
       schema.type = transformerProps.type
       schema.properties = transformerProps.properties
+      schema.required = transformerProps.required
     }
 
     transformedSchema.set(declaration.name.text, schema)
@@ -742,134 +754,95 @@ class Transformer2 {
       switch (decoratorName) {
         case constants.validatorDecorators.IsString.name:
           if (!property.isArray) {
-            schema.properties[property.name].type =
-              constants.validatorDecorators.IsString.type
-          } else if (schema.properties[property.name].items) {
-            schema.properties[property.name].items.type =
-              constants.validatorDecorators.IsString.type
+            schema.type = constants.validatorDecorators.IsString.type
+          } else if (schema.items) {
+            schema.items.type = constants.validatorDecorators.IsString.type
           }
           break
         case constants.validatorDecorators.IsInt.name:
           if (!property.isArray) {
-            schema.properties[property.name].type =
-              constants.validatorDecorators.IsInt.type
-            schema.properties[property.name].format =
-              constants.validatorDecorators.IsInt.format
-          } else if (schema.properties[property.name].items) {
-            schema.properties[property.name].items.type =
-              constants.validatorDecorators.IsInt.type
-            schema.properties[property.name].items.format =
-              constants.validatorDecorators.IsInt.format
+            schema.type = constants.validatorDecorators.IsInt.type
+            schema.format = constants.validatorDecorators.IsInt.format
+          } else if (schema.items) {
+            schema.items.type = constants.validatorDecorators.IsInt.type
+            schema.items.format = constants.validatorDecorators.IsInt.format
           }
           break
         case constants.validatorDecorators.IsNumber.name:
           if (!property.isArray) {
-            schema.properties[property.name].type =
-              constants.validatorDecorators.IsNumber.type
-          } else if (schema.properties[property.name].items) {
-            schema.properties[property.name].items.type =
-              constants.validatorDecorators.IsNumber.type
+            schema.type = constants.validatorDecorators.IsNumber.type
+          } else if (schema.items) {
+            schema.items.type = constants.validatorDecorators.IsNumber.type
           }
           break
         case constants.validatorDecorators.IsBoolean.name:
           if (!property.isArray) {
-            schema.properties[property.name].type =
-              constants.validatorDecorators.IsBoolean.type
-          } else if (schema.properties[property.name].items) {
-            schema.properties[property.name].items.type =
-              constants.validatorDecorators.IsBoolean.type
+            schema.type = constants.validatorDecorators.IsBoolean.type
+          } else if (schema.items) {
+            schema.items.type = constants.validatorDecorators.IsBoolean.type
           }
           break
         case constants.validatorDecorators.IsEmail.name:
           if (!property.isArray) {
-            schema.properties[property.name].format =
-              constants.validatorDecorators.IsEmail.format
-          } else if (schema.properties[property.name].items) {
-            schema.properties[property.name].items.format =
-              constants.validatorDecorators.IsEmail.format
+            schema.format = constants.validatorDecorators.IsEmail.format
+          } else if (schema.items) {
+            schema.items.format = constants.validatorDecorators.IsEmail.format
           }
           break
         case constants.validatorDecorators.IsDate.name:
           if (!property.isArray) {
-            schema.properties[property.name].type =
-              constants.validatorDecorators.IsDate.type
-            schema.properties[property.name].format =
-              constants.validatorDecorators.IsDate.format
-          } else if (schema.properties[property.name].items) {
-            schema.properties[property.name].items.type =
-              constants.validatorDecorators.IsDate.type
-            schema.properties[property.name].items.format =
-              constants.validatorDecorators.IsDate.format
+            schema.type = constants.validatorDecorators.IsDate.type
+            schema.format = constants.validatorDecorators.IsDate.format
+          } else if (schema.items) {
+            schema.items.type = constants.validatorDecorators.IsDate.type
+            schema.items.format = constants.validatorDecorators.IsDate.format
           }
           break
         case constants.validatorDecorators.IsNotEmpty.name:
-          if (!schema.required.includes(property.name)) {
-            schema.required.push(property.name)
-          }
+          property.isOptional = false
+          break
+        case constants.validatorDecorators.IsOptional.name:
+          property.isOptional = true
           break
         case constants.validatorDecorators.MinLength.name:
-          schema.properties[property.name].minLength = decorator.arguments[0]
+          schema.minLength = decorator.arguments[0]
           break
         case constants.validatorDecorators.MaxLength.name:
-          schema.properties[property.name].maxLength = decorator.arguments[0]
+          schema.maxLength = decorator.arguments[0]
           break
         case constants.validatorDecorators.Length.name:
-          schema.properties[property.name].minLength = decorator.arguments[0]
+          schema.minLength = decorator.arguments[0]
           if (decorator.arguments[1]) {
-            schema.properties[property.name].maxLength = decorator.arguments[1]
+            schema.maxLength = decorator.arguments[1]
           }
           break
         case constants.validatorDecorators.Min.name:
-          schema.properties[property.name].minimum = decorator.arguments[0]
+          schema.minimum = decorator.arguments[0]
           break
         case constants.validatorDecorators.Max.name:
-          schema.properties[property.name].maximum = decorator.arguments[0]
+          schema.maximum = decorator.arguments[0]
           break
         case constants.validatorDecorators.IsPositive.name:
-          schema.properties[property.name].minimum = 0
+          schema.minimum = 0
           break
         case constants.validatorDecorators.IsArray.name:
-          schema.properties[property.name].type =
-            constants.jsPrimitives.Array.value
+          schema.type = constants.jsPrimitives.Array.value
           break
         case constants.validatorDecorators.ArrayNotEmpty.name:
-          schema.properties[property.name].minItems = 1
-          if (!schema.required.includes(property.name)) {
-            schema.required.push(property.name)
-          }
+          schema.minItems = 1
+          property.isOptional = false
           break
         case constants.validatorDecorators.ArrayMinSize.name:
-          schema.properties[property.name].minItems = decorator.arguments[0]
+          schema.minItems = decorator.arguments[0]
           break
         case constants.validatorDecorators.ArrayMaxSize.name:
-          schema.properties[property.name].maxItems = decorator.arguments[0]
+          schema.maxItems = decorator.arguments[0]
           break
         case constants.validatorDecorators.IsEnum.name:
           this.applyEnumDecorator(decorator, schema)
           break
       }
     }
-  }
-
-  private setRequiredProperty(
-    property: PropertyInfo,
-    schema: SchemaType
-  ): void {
-    const required = schema.required || []
-
-    const isAlreadyRequired = required.includes(property.name)
-
-    if (isAlreadyRequired) {
-      return
-    }
-
-    if (property.isOptional) {
-      return
-    }
-
-    required.push(property.name)
-
-    schema.required = required
   }
 
   public transform(
