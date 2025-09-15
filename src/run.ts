@@ -1,4 +1,5 @@
-import {
+import './__test__/'
+/* import {
   IsArray,
   IsBoolean,
   IsOptional,
@@ -44,3 +45,4 @@ const userSchema = transform(User)
 const roleSchema = transform(ActionRole)
 
 console.log(JSON.stringify(roleSchema, null, 2))
+ */

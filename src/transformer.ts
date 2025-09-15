@@ -706,7 +706,7 @@ class SchemaTransformer {
         propertySchema.type = constants.jsPrimitives.BigInt.value
         propertySchema.format = constants.jsPrimitives.BigInt.format
         break
-      case constants.jsPrimitives.Date.value:
+      case constants.jsPrimitives.Date.type.toLocaleLowerCase():
         propertySchema.type = constants.jsPrimitives.Date.value
         propertySchema.format = constants.jsPrimitives.Date.format
         break
