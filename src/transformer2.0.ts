@@ -611,6 +611,9 @@ class Transformer2 {
       schema = { type: 'object', properties: {}, additionalProperties: true }
     }
 
+    this.applyDecorators(property, schema as SchemaType)
+    this.setRequiredProperty(property, schema as SchemaType)
+
     return schema
   }
 
@@ -726,6 +729,149 @@ class Transformer2 {
     return propertySchema
   }
 
+  //Todo: implement properly
+  private applyEnumDecorator(
+    decorator: DecoratorInfo,
+    schema: SchemaType
+  ): void {}
+
+  private applyDecorators(property: PropertyInfo, schema: SchemaType): void {
+    for (const decorator of property.decorators) {
+      const decoratorName = decorator.name
+
+      switch (decoratorName) {
+        case constants.validatorDecorators.IsString.name:
+          if (!property.isArray) {
+            schema.properties[property.name].type =
+              constants.validatorDecorators.IsString.type
+          } else if (schema.properties[property.name].items) {
+            schema.properties[property.name].items.type =
+              constants.validatorDecorators.IsString.type
+          }
+          break
+        case constants.validatorDecorators.IsInt.name:
+          if (!property.isArray) {
+            schema.properties[property.name].type =
+              constants.validatorDecorators.IsInt.type
+            schema.properties[property.name].format =
+              constants.validatorDecorators.IsInt.format
+          } else if (schema.properties[property.name].items) {
+            schema.properties[property.name].items.type =
+              constants.validatorDecorators.IsInt.type
+            schema.properties[property.name].items.format =
+              constants.validatorDecorators.IsInt.format
+          }
+          break
+        case constants.validatorDecorators.IsNumber.name:
+          if (!property.isArray) {
+            schema.properties[property.name].type =
+              constants.validatorDecorators.IsNumber.type
+          } else if (schema.properties[property.name].items) {
+            schema.properties[property.name].items.type =
+              constants.validatorDecorators.IsNumber.type
+          }
+          break
+        case constants.validatorDecorators.IsBoolean.name:
+          if (!property.isArray) {
+            schema.properties[property.name].type =
+              constants.validatorDecorators.IsBoolean.type
+          } else if (schema.properties[property.name].items) {
+            schema.properties[property.name].items.type =
+              constants.validatorDecorators.IsBoolean.type
+          }
+          break
+        case constants.validatorDecorators.IsEmail.name:
+          if (!property.isArray) {
+            schema.properties[property.name].format =
+              constants.validatorDecorators.IsEmail.format
+          } else if (schema.properties[property.name].items) {
+            schema.properties[property.name].items.format =
+              constants.validatorDecorators.IsEmail.format
+          }
+          break
+        case constants.validatorDecorators.IsDate.name:
+          if (!property.isArray) {
+            schema.properties[property.name].type =
+              constants.validatorDecorators.IsDate.type
+            schema.properties[property.name].format =
+              constants.validatorDecorators.IsDate.format
+          } else if (schema.properties[property.name].items) {
+            schema.properties[property.name].items.type =
+              constants.validatorDecorators.IsDate.type
+            schema.properties[property.name].items.format =
+              constants.validatorDecorators.IsDate.format
+          }
+          break
+        case constants.validatorDecorators.IsNotEmpty.name:
+          if (!schema.required.includes(property.name)) {
+            schema.required.push(property.name)
+          }
+          break
+        case constants.validatorDecorators.MinLength.name:
+          schema.properties[property.name].minLength = decorator.arguments[0]
+          break
+        case constants.validatorDecorators.MaxLength.name:
+          schema.properties[property.name].maxLength = decorator.arguments[0]
+          break
+        case constants.validatorDecorators.Length.name:
+          schema.properties[property.name].minLength = decorator.arguments[0]
+          if (decorator.arguments[1]) {
+            schema.properties[property.name].maxLength = decorator.arguments[1]
+          }
+          break
+        case constants.validatorDecorators.Min.name:
+          schema.properties[property.name].minimum = decorator.arguments[0]
+          break
+        case constants.validatorDecorators.Max.name:
+          schema.properties[property.name].maximum = decorator.arguments[0]
+          break
+        case constants.validatorDecorators.IsPositive.name:
+          schema.properties[property.name].minimum = 0
+          break
+        case constants.validatorDecorators.IsArray.name:
+          schema.properties[property.name].type =
+            constants.jsPrimitives.Array.value
+          break
+        case constants.validatorDecorators.ArrayNotEmpty.name:
+          schema.properties[property.name].minItems = 1
+          if (!schema.required.includes(property.name)) {
+            schema.required.push(property.name)
+          }
+          break
+        case constants.validatorDecorators.ArrayMinSize.name:
+          schema.properties[property.name].minItems = decorator.arguments[0]
+          break
+        case constants.validatorDecorators.ArrayMaxSize.name:
+          schema.properties[property.name].maxItems = decorator.arguments[0]
+          break
+        case constants.validatorDecorators.IsEnum.name:
+          this.applyEnumDecorator(decorator, schema)
+          break
+      }
+    }
+  }
+
+  private setRequiredProperty(
+    property: PropertyInfo,
+    schema: SchemaType
+  ): void {
+    const required = schema.required || []
+
+    const isAlreadyRequired = required.includes(property.name)
+
+    if (isAlreadyRequired) {
+      return
+    }
+
+    if (property.isOptional) {
+      return
+    }
+
+    required.push(property.name)
+
+    schema.required = required
+  }
+
   public transform(
     cls: Function,
     sourceOptions?: {
@@ -734,7 +880,6 @@ class Transformer2 {
       filePath?: string
     }
   ): { name: string; schema: SchemaType } {
-    
     let schema: SchemaType = { type: 'object', properties: {} }
 
     const result = this.getSourceFileByClassName(cls.name, sourceOptions)
