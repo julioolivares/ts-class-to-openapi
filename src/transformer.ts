@@ -55,11 +55,56 @@ class SchemaTransformer {
   }
 
   private getPropertiesByClassDeclaration(
-    classNode: ts.ClassDeclaration
+    classNode: ts.ClassDeclaration,
+    visitedDeclarations: Set<ts.ClassDeclaration> = new Set<ts.ClassDeclaration>()
   ): PropertyInfo[] {
+    if (visitedDeclarations.has(classNode)) {
+      return [] as PropertyInfo[]
+    }
+
+    visitedDeclarations.add(classNode)
+
+    // if no heritage clauses, get properties directly from class
+    if (!classNode.heritageClauses) {
+      return this.getPropertiesByClassMembers(classNode.members)
+    } // use heritage clauses to get properties from base classes
+    else {
+      const heritageClause = classNode.heritageClauses[0]
+
+      if (
+        heritageClause &&
+        heritageClause.token === ts.SyntaxKind.ExtendsKeyword
+      ) {
+        const type = heritageClause.types[0]
+        let properties: PropertyInfo[] = []
+        let baseProperties: PropertyInfo[] = []
+
+        if (!type) return [] as PropertyInfo[]
+
+        const symbol = this.checker.getSymbolAtLocation(type.expression)
+        if (!symbol) return [] as PropertyInfo[]
+
+        const declaration = symbol.declarations?.[0]
+
+        if (declaration && ts.isClassDeclaration(declaration)) {
+          baseProperties = this.getPropertiesByClassDeclaration(
+            declaration,
+            visitedDeclarations
+          )
+        }
+        properties = this.getPropertiesByClassMembers(classNode.members)
+
+        return baseProperties.concat(properties)
+      } else {
+        return this.getPropertiesByClassMembers(classNode.members)
+      }
+    }
+  }
+
+  private getPropertiesByClassMembers(members: ts.NodeArray<ts.ClassElement>) {
     const properties: PropertyInfo[] = []
 
-    for (const member of classNode.members) {
+    for (const member of members) {
       if (
         ts.isPropertyDeclaration(member) &&
         member.name &&
