@@ -7,6 +7,7 @@ import {
   TransformerOptions,
 } from './types'
 import { constants } from './transformer.fixtures'
+import { format } from 'node:path'
 
 class SchemaTransformer {
   private static instance: SchemaTransformer | null | undefined = null
@@ -842,6 +843,9 @@ class SchemaTransformer {
       propertySchema.type = `array`
       propertySchema.items = {
         type: isFile ? constants.jsPrimitives.UploadFile.value : propertyType,
+        format: isFile
+          ? constants.jsPrimitives.UploadFile.format
+          : propertySchema.format,
       }
     }
 
