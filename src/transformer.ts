@@ -840,6 +840,7 @@ class SchemaTransformer {
     }
 
     if (property.isArray) {
+      delete propertySchema.format
       propertySchema.type = `array`
       propertySchema.items = {
         type: isFile ? constants.jsPrimitives.UploadFile.value : propertyType,

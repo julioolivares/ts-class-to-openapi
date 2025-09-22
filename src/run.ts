@@ -1,5 +1,5 @@
 import './__test__/'
-/* import {
+import {
   IsArray,
   IsBoolean,
   IsOptional,
@@ -7,7 +7,7 @@ import './__test__/'
   Length,
 } from 'class-validator'
 
-import { transform } from './transformer2.0.js'
+import { transform } from './transformer'
 import { Server } from 'socket.io'
 class User {
   id: number
@@ -26,6 +26,13 @@ class Role {
   name: string
 }
 
+class UploadFile {
+  filename: string
+  mimetype: string
+  encoding: string
+  data: Buffer
+}
+
 class ActionRole {
   role: Role
 
@@ -38,6 +45,8 @@ class ActionRole {
   action: string
   @IsBoolean()
   isActive?: boolean
+
+  images: UploadFile[]
 }
 
 const userSchema = transform(User)
@@ -45,4 +54,3 @@ const userSchema = transform(User)
 const roleSchema = transform(ActionRole)
 
 console.log(JSON.stringify(roleSchema, null, 2))
- */
