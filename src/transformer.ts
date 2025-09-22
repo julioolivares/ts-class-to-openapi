@@ -797,7 +797,7 @@ class SchemaTransformer {
   private getSchemaFromPrimitive(property: PropertyInfo): Property {
     const propertySchema = { type: 'object' } as Property
     const propertyType = property.type.toLowerCase().replace('[]', '').trim()
-
+    let isFile = false
     switch (propertyType) {
       case constants.jsPrimitives.String.value:
         propertySchema.type = constants.jsPrimitives.String.value
@@ -814,12 +814,13 @@ class SchemaTransformer {
         propertySchema.type = constants.jsPrimitives.Date.value
         propertySchema.format = constants.jsPrimitives.Date.format
         break
-      case constants.jsPrimitives.Buffer.value:
-      case constants.jsPrimitives.Uint8Array.value:
-      case constants.jsPrimitives.File.value:
-      case constants.jsPrimitives.UploadFile.value:
+      case constants.jsPrimitives.Buffer.type.toLocaleLowerCase():
+      case constants.jsPrimitives.Uint8Array.type.toLocaleLowerCase():
+      case constants.jsPrimitives.File.type.toLocaleLowerCase():
+      case constants.jsPrimitives.UploadFile.type.toLocaleLowerCase():
         propertySchema.type = constants.jsPrimitives.UploadFile.value
         propertySchema.format = constants.jsPrimitives.UploadFile.format
+        isFile = true
         break
       case constants.jsPrimitives.Array.value:
         propertySchema.type = constants.jsPrimitives.Array.value
@@ -839,7 +840,9 @@ class SchemaTransformer {
 
     if (property.isArray) {
       propertySchema.type = `array`
-      propertySchema.items = { type: propertyType }
+      propertySchema.items = {
+        type: isFile ? constants.jsPrimitives.UploadFile.value : propertyType,
+      }
     }
 
     return propertySchema
