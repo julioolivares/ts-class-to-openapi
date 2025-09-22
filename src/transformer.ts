@@ -66,7 +66,7 @@ class SchemaTransformer {
 
     // if no heritage clauses, get properties directly from class
     if (!classNode.heritageClauses) {
-      return this.getPropertiesByClassMembers(classNode.members)
+      return this.getPropertiesByClassMembers(classNode.members, classNode)
     } // use heritage clauses to get properties from base classes
     else {
       const heritageClause = classNode.heritageClauses[0]
@@ -92,16 +92,23 @@ class SchemaTransformer {
             visitedDeclarations
           )
         }
-        properties = this.getPropertiesByClassMembers(classNode.members)
+
+        properties = this.getPropertiesByClassMembers(
+          classNode.members,
+          classNode
+        )
 
         return baseProperties.concat(properties)
       } else {
-        return this.getPropertiesByClassMembers(classNode.members)
+        return this.getPropertiesByClassMembers(classNode.members, classNode)
       }
     }
   }
 
-  private getPropertiesByClassMembers(members: ts.NodeArray<ts.ClassElement>) {
+  private getPropertiesByClassMembers(
+    members: ts.NodeArray<ts.ClassElement>,
+    parentClassNode?: ts.ClassDeclaration
+  ) {
     const properties: PropertyInfo[] = []
 
     for (const member of members) {
@@ -116,6 +123,8 @@ class SchemaTransformer {
         const isOptional = !!member.questionToken
         const isGeneric = this.isPropertyTypeGeneric(member)
         const isPrimitive = this.isPrimitiveType(type)
+        const isClassType = this.isClassType(member)
+        const isArray = this.isArrayProperty(member)
 
         const property: PropertyInfo = {
           name: propertyName,
@@ -125,8 +134,31 @@ class SchemaTransformer {
           isGeneric,
           originalProperty: member,
           isPrimitive,
-          isClassType: this.isClassType(member),
-          isArray: this.isArrayProperty(member),
+          isClassType,
+          isArray,
+          isRef: false,
+        }
+
+        // Check for self-referencing properties to mark as $ref
+        if (property.isClassType) {
+          const declaration = this.getDeclarationProperty(
+            property
+          ) as ts.ClassDeclaration
+
+          if (parentClassNode) {
+            if (
+              declaration &&
+              declaration.name &&
+              this.checker.getSymbolAtLocation(declaration.name as ts.Node) ===
+                this.checker.getSymbolAtLocation(
+                  parentClassNode.name as ts.Node
+                )
+            ) {
+              property.isRef = true
+            }
+          } else {
+            debugger
+          }
         }
 
         properties.push(property)
@@ -615,10 +647,12 @@ class SchemaTransformer {
     properties,
     visitedClass,
     transformedSchema,
+    classDeclaration,
   }: {
     properties: PropertyInfo[]
     visitedClass?: Set<ts.ClassDeclaration>
     transformedSchema?: Map<string, Property>
+    classDeclaration: ts.ClassDeclaration
   }): Record<string, Property> {
     let schema: Record<string, Property> = {}
     const required: string[] = []
@@ -628,6 +662,7 @@ class SchemaTransformer {
         property,
         visitedClass,
         transformedSchema,
+        classDeclaration,
       })
 
       // this.applyDecorators(property, schema as SchemaType)
@@ -648,21 +683,43 @@ class SchemaTransformer {
     property,
     visitedClass,
     transformedSchema,
+    classDeclaration,
   }: {
     property: PropertyInfo
     visitedClass?: Set<ts.ClassDeclaration> | undefined
     transformedSchema?: Map<string, Property> | undefined
+    classDeclaration: ts.ClassDeclaration
   }): Property {
     let schema: Property = {} as Property
 
     if (property.isPrimitive) {
       schema = this.getSchemaFromPrimitive(property)
     } else if (property.isClassType) {
-      schema = this.getSchemaFromClass({
-        property,
-        visitedClass,
-        transformedSchema,
-      })
+      const declaration = this.getDeclarationProperty(
+        property
+      ) as ts.ClassDeclaration
+
+      if (property.isRef && classDeclaration.name) {
+        // Self-referencing property, handle as a reference to avoid infinite recursion
+
+        if (property.isArray) {
+          schema.type = 'array'
+          schema.items = {
+            $ref: `#/components/schemas/${classDeclaration.name.text}`,
+          } as Property
+        } else {
+          schema = {
+            $ref: `#/components/schemas/${classDeclaration.name.text}`,
+          } as Property
+        }
+      } else {
+        schema = this.getSchemaFromClass({
+          isArray: property.isArray as boolean,
+          visitedClass,
+          transformedSchema,
+          declaration,
+        })
+      }
     } else {
       schema = { type: 'object', properties: {}, additionalProperties: true }
     }
@@ -673,17 +730,17 @@ class SchemaTransformer {
   }
 
   private getSchemaFromClass({
-    property,
     transformedSchema = new Map(),
     visitedClass = new Set(),
+    declaration,
+    isArray,
   }: {
-    property: PropertyInfo
     visitedClass?: Set<ts.ClassDeclaration> | undefined
     transformedSchema?: Map<string, Property> | undefined
+    declaration: ts.Declaration | undefined
+    isArray: boolean
   }): Property {
     let schema: Property = { type: 'object' } as Property
-
-    const declaration = this.getDeclarationProperty(property)
 
     if (
       !declaration ||
@@ -694,13 +751,18 @@ class SchemaTransformer {
     }
 
     if (visitedClass.has(declaration)) {
-      if (transformedSchema.has(declaration.name.text)) {
-        return transformedSchema.get(declaration.name.text) as Property
+      if (isArray) {
+        schema.type = 'array'
+        schema.items = {
+          $ref: `#/components/schemas/${declaration.name.text}`,
+        } as Property
+      } else {
+        schema = {
+          $ref: `#/components/schemas/${declaration.name.text}`,
+        } as Property
       }
 
-      return {
-        $ref: `#/components/schemas/${declaration.name.text}`,
-      } as Property
+      return schema
     }
 
     visitedClass.add(declaration)
@@ -711,9 +773,10 @@ class SchemaTransformer {
       properties,
       visitedClass,
       transformedSchema: transformedSchema,
+      classDeclaration: declaration,
     }) as SchemaType
 
-    if (property.isArray) {
+    if (isArray) {
       schema.type = 'array'
       schema.items = {
         type: transformerProps.type,
@@ -727,10 +790,6 @@ class SchemaTransformer {
     }
 
     transformedSchema.set(declaration.name.text, schema)
-
-    if (schema.properties && Object.keys(schema.properties).length === 0) {
-      schema = { type: 'object', properties: {}, additionalProperties: true }
-    }
 
     return schema
   }
@@ -909,7 +968,10 @@ class SchemaTransformer {
 
     const properties = this.getPropertiesByClassDeclaration(result.node)
 
-    schema = this.getSchemaFromProperties({ properties }) as SchemaType
+    schema = this.getSchemaFromProperties({
+      properties,
+      classDeclaration: result.node,
+    }) as SchemaType
 
     return { name: cls.name, schema }
   }

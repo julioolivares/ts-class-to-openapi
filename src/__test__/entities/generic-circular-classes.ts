@@ -78,7 +78,7 @@ export class SelfReferencingGenericClass
   }
 
   getReference(): SelfReferencingGenericClass | undefined {
-    return this.related
+    return this
   }
 
   setReference(ref: SelfReferencingGenericClass): void {

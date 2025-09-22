@@ -98,19 +98,21 @@ export class MultiPathCircularClass {
 /**
  * Base generic class that can create circular references
  */
-export class GenericContainer<T> {
-  value: T
+export class GenericContainer {
+  value: any
   metadata: Record<string, any>
   // Self reference using the same type parameter
-  related?: GenericContainer<T>
+  related?: GenericContainer
 }
 
 /**
  * Concrete implementation with self-reference
  */
-export class SelfReferencingGenericClass extends GenericContainer<SelfReferencingGenericClass> {
+export class SelfReferencingGenericClass extends GenericContainer {
   id: number
   name: string
+
+  children: SelfReferencingGenericClass
 }
 
 /**

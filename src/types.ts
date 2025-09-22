@@ -49,6 +49,9 @@ interface PropertyInfo {
 
   /** The original TypeScript property declaration (optional) */
   originalProperty: ts.PropertyDeclaration
+
+  /** Whether the property is a reference to another or yourselves schema */
+  isRef?: boolean
 }
 
 /**
