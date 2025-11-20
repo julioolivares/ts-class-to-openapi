@@ -9,6 +9,9 @@ import {
 
 import { transform } from './transformer'
 import { Server } from 'socket.io'
+
+type PayloadEntity<T> = {} & Omit<T, 'toObject' | 'validate' | 'toInstance'>
+
 class User {
   id: number
   name: string
@@ -16,9 +19,9 @@ class User {
   isActive: boolean
   tags: string[]
   roles: Role[]
-  mainRole: Role
+  mainRole: PayloadEntity<Role>
   actionRoles: ActionRole[]
-  server: Server
+  //server: Server
 }
 
 class Role {
@@ -53,4 +56,4 @@ const userSchema = transform(User)
 
 const roleSchema = transform(ActionRole)
 
-console.log(JSON.stringify(roleSchema, null, 2))
+console.log(JSON.stringify(userSchema, null, 2))

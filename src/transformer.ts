@@ -126,6 +126,7 @@ class SchemaTransformer {
         const isPrimitive = this.isPrimitiveType(type)
         const isClassType = this.isClassType(member)
         const isArray = this.isArrayProperty(member)
+        const isTypeLiteral = this.isTypeLiteral(member)
 
         const property: PropertyInfo = {
           name: propertyName,
@@ -138,6 +139,7 @@ class SchemaTransformer {
           isClassType,
           isArray,
           isRef: false,
+          isTypeLiteral: isTypeLiteral,
         }
 
         // Check for self-referencing properties to mark as $ref
@@ -157,8 +159,39 @@ class SchemaTransformer {
             ) {
               property.isRef = true
             }
-          } else {
-            debugger
+          }
+        }
+
+        if (
+          property.isTypeLiteral &&
+          property.originalProperty.type &&
+          (property.originalProperty.type as ts.NodeWithTypeArguments)
+            .typeArguments?.length === 1
+        ) {
+          const typeArguments = (
+            property.originalProperty.type as ts.NodeWithTypeArguments
+          ).typeArguments
+
+          if (typeArguments && typeArguments[0]) {
+            const firstTypeArg = typeArguments[0]
+
+            if (ts.isTypeReferenceNode(firstTypeArg)) {
+              const type = this.checker.getTypeAtLocation(firstTypeArg)
+              const symbol = type.getSymbol()
+
+              if (symbol && symbol.declarations) {
+                const classDeclaration = symbol.declarations.find(decl =>
+                  ts.isClassDeclaration(decl)
+                )
+
+                if (
+                  classDeclaration &&
+                  ts.isClassDeclaration(classDeclaration)
+                ) {
+                  property.typeLiteralClassReference = classDeclaration
+                }
+              }
+            }
           }
         }
 
@@ -696,36 +729,71 @@ class SchemaTransformer {
     if (property.isPrimitive) {
       schema = this.getSchemaFromPrimitive(property)
     } else if (property.isClassType) {
-      const declaration = this.getDeclarationProperty(
-        property
-      ) as ts.ClassDeclaration
-
-      if (property.isRef && classDeclaration.name) {
-        // Self-referencing property, handle as a reference to avoid infinite recursion
-
-        if (property.isArray) {
-          schema.type = 'array'
-          schema.items = {
-            $ref: `#/components/schemas/${classDeclaration.name.text}`,
-          } as Property
-        } else {
-          schema = {
-            $ref: `#/components/schemas/${classDeclaration.name.text}`,
-          } as Property
-        }
-      } else {
-        schema = this.getSchemaFromClass({
-          isArray: property.isArray as boolean,
-          visitedClass,
-          transformedSchema,
-          declaration,
-        })
-      }
+      schema = this.buildSchemaFromClass({
+        property,
+        classDeclaration,
+        visitedClass,
+        transformedSchema,
+      })
+    } else if (property.isTypeLiteral && property.typeLiteralClassReference) {
+      schema = this.buildSchemaFromClass({
+        property,
+        classDeclaration: property.typeLiteralClassReference,
+        visitedClass,
+        transformedSchema,
+      })
     } else {
       schema = { type: 'object', properties: {}, additionalProperties: true }
     }
 
     this.applyDecorators(property, schema as SchemaType)
+
+    return schema
+  }
+
+  private buildSchemaFromClass({
+    property,
+    classDeclaration,
+    visitedClass,
+    transformedSchema,
+  }: {
+    property: PropertyInfo
+    classDeclaration: ts.ClassDeclaration
+    visitedClass: Set<ts.ClassDeclaration> | undefined
+    transformedSchema: Map<string, Property> | undefined
+  }) {
+    const declaration = this.getDeclarationProperty(
+      property
+    ) as ts.ClassDeclaration
+    let schema: Property = {} as Property
+
+    if (property.isRef && classDeclaration.name) {
+      // Self-referencing property, handle as a reference to avoid infinite recursion
+      if (property.isArray) {
+        schema.type = 'array'
+        schema.items = {
+          $ref: `#/components/schemas/${classDeclaration.name.text}`,
+        } as Property
+      } else {
+        schema = {
+          $ref: `#/components/schemas/${classDeclaration.name.text}`,
+        } as Property
+      }
+    } else if (property.isTypeLiteral && property.typeLiteralClassReference) {
+      schema = this.getSchemaFromClass({
+        isArray: property.isArray as boolean,
+        visitedClass,
+        transformedSchema,
+        declaration: property.typeLiteralClassReference,
+      })
+    } else {
+      schema = this.getSchemaFromClass({
+        isArray: property.isArray as boolean,
+        visitedClass,
+        transformedSchema,
+        declaration,
+      })
+    }
 
     return schema
   }
@@ -851,6 +919,48 @@ class SchemaTransformer {
     }
 
     return propertySchema
+  }
+
+  private isTypeLiteral(property: ts.PropertyDeclaration): boolean {
+    if (!property.type) return false
+
+    if (ts.isTypeReferenceNode(property.type)) {
+      const symbol = this.checker.getSymbolAtLocation(property.type.typeName)
+
+      if (symbol) {
+        const declarations = symbol.getDeclarations()
+
+        if (declarations && declarations.length > 0) {
+          const typeAliasDecl = declarations.find(decl =>
+            ts.isTypeAliasDeclaration(decl)
+          ) as ts.TypeAliasDeclaration
+
+          if (typeAliasDecl && typeAliasDecl.type) {
+            return this.isLiteralTypeNode(typeAliasDecl.type)
+          }
+        }
+      }
+    }
+
+    return false
+  }
+
+  /**
+   *
+   * @param typeNode
+   * @returns boolean - true si el typeNode representa un tipo literal complejo
+   */
+  private isLiteralTypeNode(typeNode: ts.TypeNode): boolean {
+    return (
+      ts.isIntersectionTypeNode(typeNode) || // {} & Omit<T, ...>
+      ts.isUnionTypeNode(typeNode) || // string | number
+      ts.isMappedTypeNode(typeNode) || // { [K in keyof T]: ... }
+      ts.isTypeLiteralNode(typeNode) || // { foo: string }
+      ts.isConditionalTypeNode(typeNode) || // T extends U ? X : Y
+      ts.isIndexedAccessTypeNode(typeNode) || // T['key']
+      ts.isTypeOperatorNode(typeNode) || // keyof T, readonly T
+      ts.isTypeReferenceNode(typeNode) // Omit, Pick, Partial, etc.
+    )
   }
 
   //Todo: implement properly

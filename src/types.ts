@@ -52,6 +52,11 @@ interface PropertyInfo {
 
   /** Whether the property is a reference to another or yourselves schema */
   isRef?: boolean
+
+  isTypeLiteral?: boolean
+
+  /** The class declaration reference when the property is a type literal with a class argument */
+  typeLiteralClassReference?: ts.ClassDeclaration
 }
 
 /**
