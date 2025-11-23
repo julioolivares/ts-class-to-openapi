@@ -231,7 +231,7 @@ const schema = transform(User)
 
 ### 4. Enumerations and Special Types
 
-Full compatibility with TypeScript enumerations:
+Full compatibility with TypeScript enumerations (both decorated and pure):
 
 ```typescript
 import { transform } from 'ts-class-to-openapi'
@@ -252,6 +252,9 @@ enum Priority {
 class Task {
   @IsEnum(UserType)
   assignedTo: UserType
+
+  // Pure TypeScript enum (automatically detected without decorator)
+  status: UserType
 
   @IsEnum(Priority)
   priority?: Priority
@@ -276,6 +279,10 @@ const schema = transform(Task)
         "type": "string",
         "enum": ["admin", "user", "moderator"]
       },
+      "status": {
+        "type": "string",
+        "enum": ["admin", "user", "moderator"]
+      },
       "priority": {
         "type": "number",
         "enum": [1, 2, 3]
@@ -287,7 +294,7 @@ const schema = transform(Task)
         "format": "date-time"
       }
     },
-    "required": ["assignedTo", "title", "completed", "dueDate"]
+    "required": ["assignedTo", "status", "title", "completed", "dueDate"]
   }
 }
 ```
