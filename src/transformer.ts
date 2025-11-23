@@ -603,33 +603,71 @@ class SchemaTransformer {
     }
 
     // Check if the original property type is an array type
-    if (
-      this.isArrayProperty(propertyDeclaration) &&
-      ts.isTypeReferenceNode(
-        (propertyDeclaration.type as ts.ArrayTypeNode)
-          .elementType as ts.TypeReferenceNode
-      )
-    ) {
-      const type = this.checker.getTypeAtLocation(
-        (propertyDeclaration.type as ts.ArrayTypeNode).elementType
-      )
+    if (this.isArrayProperty(propertyDeclaration)) {
+      const arrayType = propertyDeclaration.type as ts.ArrayTypeNode
+      const elementType = arrayType.elementType
 
+      // Special handling for utility types with type arguments (e.g., PayloadEntity<Person>)
+      if (
+        ts.isTypeReferenceNode(elementType) &&
+        elementType.typeArguments &&
+        elementType.typeArguments.length > 0
+      ) {
+        // Check the first type argument - it might be the actual class
+        const firstTypeArg = elementType.typeArguments[0]
+        if (firstTypeArg) {
+          const argType = this.checker.getTypeAtLocation(firstTypeArg)
+          const argSymbol = argType.getSymbol()
+          if (argSymbol && argSymbol.declarations) {
+            const hasClass = argSymbol.declarations.some(decl =>
+              ts.isClassDeclaration(decl)
+            )
+            if (hasClass) return true
+          }
+        }
+      }
+
+      // Get the type from the element, regardless of its syntaxkind
+      const type = this.checker.getTypeAtLocation(elementType)
       const symbol = type.getSymbol()
 
       if (symbol && symbol.declarations) {
         return symbol.declarations.some(decl => ts.isClassDeclaration(decl))
       }
-    } else if (ts.isTypeReferenceNode(propertyDeclaration.type)) {
-      const type = this.checker.getTypeAtLocation(propertyDeclaration.type)
 
-      const symbol = type.getSymbol()
-
-      if (symbol && symbol.declarations) {
-        return symbol.declarations.some(decl => ts.isClassDeclaration(decl))
-      }
+      return false
     }
+    // Check non-array types
+    else {
+      // Special handling for utility types with type arguments (e.g., PayloadEntity<Branch>)
+      if (
+        ts.isTypeReferenceNode(propertyDeclaration.type) &&
+        propertyDeclaration.type.typeArguments &&
+        propertyDeclaration.type.typeArguments.length > 0
+      ) {
+        // Check the first type argument - it might be the actual class
+        const firstTypeArg = propertyDeclaration.type.typeArguments[0]
+        if (firstTypeArg) {
+          const argType = this.checker.getTypeAtLocation(firstTypeArg)
+          const argSymbol = argType.getSymbol()
+          if (argSymbol && argSymbol.declarations) {
+            const hasClass = argSymbol.declarations.some(decl =>
+              ts.isClassDeclaration(decl)
+            )
+            if (hasClass) return true
+          }
+        }
+      }
 
-    return false
+      const type = this.checker.getTypeAtLocation(propertyDeclaration.type)
+      const symbol = type.getSymbol()
+
+      if (symbol && symbol.declarations) {
+        return symbol.declarations.some(decl => ts.isClassDeclaration(decl))
+      }
+
+      return false
+    }
   }
 
   private getDeclarationProperty(
@@ -639,29 +677,72 @@ class SchemaTransformer {
       return undefined
     }
 
+    // Handle array types - get the element type
+    if (ts.isArrayTypeNode(property.originalProperty.type)) {
+      const elementType = property.originalProperty.type.elementType
+
+      // Check if it's a utility type with type arguments (e.g., PayloadEntity<Branch>[])
+      if (
+        ts.isTypeReferenceNode(elementType) &&
+        elementType.typeArguments &&
+        elementType.typeArguments.length > 0
+      ) {
+        const firstTypeArg = elementType.typeArguments[0]
+        if (firstTypeArg) {
+          const argType = this.checker.getTypeAtLocation(firstTypeArg)
+          const argSymbol = argType.getSymbol()
+          if (argSymbol && argSymbol.declarations) {
+            const classDecl = argSymbol.declarations.find(decl =>
+              ts.isClassDeclaration(decl)
+            )
+            if (classDecl) return classDecl
+          }
+        }
+      }
+
+      const type = this.checker.getTypeAtLocation(elementType)
+      const symbol = type.getSymbol()
+
+      if (symbol && symbol.declarations) {
+        // Return the first class declaration found
+        const classDecl = symbol.declarations.find(decl =>
+          ts.isClassDeclaration(decl)
+        )
+        return classDecl || symbol.declarations[0]
+      }
+
+      return undefined
+    }
+
+    // Handle non-array types
+    // Check if it's a utility type with type arguments (e.g., PayloadEntity<Branch>)
     if (
-      ts.isArrayTypeNode(property.originalProperty.type) &&
-      ts.isTypeReferenceNode(property.originalProperty.type.elementType)
+      ts.isTypeReferenceNode(property.originalProperty.type) &&
+      property.originalProperty.type.typeArguments &&
+      property.originalProperty.type.typeArguments.length > 0
     ) {
-      const type = this.checker.getTypeAtLocation(
-        property.originalProperty.type.elementType
-      )
-
-      const symbol = type.getSymbol()
-
-      if (symbol && symbol.declarations) {
-        return symbol.declarations[0]
+      const firstTypeArg = property.originalProperty.type.typeArguments[0]
+      if (firstTypeArg) {
+        const argType = this.checker.getTypeAtLocation(firstTypeArg)
+        const argSymbol = argType.getSymbol()
+        if (argSymbol && argSymbol.declarations) {
+          const classDecl = argSymbol.declarations.find(decl =>
+            ts.isClassDeclaration(decl)
+          )
+          if (classDecl) return classDecl
+        }
       }
-    } else if (ts.isTypeReferenceNode(property.originalProperty.type)) {
-      const type = this.checker.getTypeAtLocation(
-        property.originalProperty.type
+    }
+
+    const type = this.checker.getTypeAtLocation(property.originalProperty.type)
+    const symbol = type.getSymbol()
+
+    if (symbol && symbol.declarations) {
+      // Return the first class declaration found
+      const classDecl = symbol.declarations.find(decl =>
+        ts.isClassDeclaration(decl)
       )
-
-      const symbol = type.getSymbol()
-
-      if (symbol && symbol.declarations) {
-        return symbol.declarations[0]
-      }
+      return classDecl || symbol.declarations[0]
     }
 
     return undefined
