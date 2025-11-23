@@ -47,6 +47,9 @@ interface PropertyInfo {
   /** Whether the property type is an array type */
   isArray?: boolean
 
+  /** Whether the property type is an enum type */
+  isEnum?: boolean
+
   /** The original TypeScript property declaration (optional) */
   originalProperty: ts.PropertyDeclaration
 

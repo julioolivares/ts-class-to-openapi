@@ -123,7 +123,8 @@ class SchemaTransformer {
         const decorators = this.extractDecorators(member)
         const isOptional = !!member.questionToken
         const isGeneric = this.isPropertyTypeGeneric(member)
-        const isPrimitive = this.isPrimitiveType(type)
+        const isEnum = this.isEnum(member)
+        const isPrimitive = this.isPrimitiveType(type) || isEnum
         const isClassType = this.isClassType(member)
         const isArray = this.isArrayProperty(member)
         const isTypeLiteral = this.isTypeLiteral(member)
@@ -138,6 +139,7 @@ class SchemaTransformer {
           isPrimitive,
           isClassType,
           isArray,
+          isEnum,
           isRef: false,
           isTypeLiteral: isTypeLiteral,
         }
@@ -336,8 +338,15 @@ class SchemaTransformer {
       if (ts.isStringLiteral(arg)) return arg.text
       if (arg.kind === ts.SyntaxKind.TrueKeyword) return true
       if (arg.kind === ts.SyntaxKind.FalseKeyword) return false
-      return arg.getText()
+      return arg
     })
+  }
+
+  private getSafeDecoratorArgument(arg: any): any {
+    if (arg && typeof arg === 'object' && 'kind' in arg) {
+      return (arg as ts.Node).getText()
+    }
+    return arg
   }
 
   private isPropertyTypeGeneric(property: ts.PropertyDeclaration): boolean {
@@ -594,6 +603,29 @@ class SchemaTransformer {
         return { sourceFile, node: node as ts.ClassDeclaration }
       }
     }
+  }
+
+  private isEnum(propertyDeclaration: ts.PropertyDeclaration): boolean {
+    if (!propertyDeclaration.type) {
+      return false
+    }
+
+    let typeNode = propertyDeclaration.type
+
+    if (ts.isArrayTypeNode(typeNode)) {
+      typeNode = typeNode.elementType
+    }
+
+    if (ts.isTypeReferenceNode(typeNode)) {
+      const type = this.checker.getTypeAtLocation(typeNode)
+      // console.log('isEnum check:', typeNode.getText(), type.flags)
+      return (
+        !!(type.flags & ts.TypeFlags.Enum) ||
+        !!(type.flags & ts.TypeFlags.EnumLiteral)
+      )
+    }
+
+    return false
   }
 
   private isClassType(propertyDeclaration: ts.PropertyDeclaration): boolean {
@@ -944,10 +976,65 @@ class SchemaTransformer {
     return schema
   }
 
+  private getSchemaFromEnum(property: PropertyInfo): Property | undefined {
+    let typeNode = property.originalProperty.type!
+    if (ts.isArrayTypeNode(typeNode)) {
+      typeNode = typeNode.elementType
+    }
+
+    const type = this.checker.getTypeAtLocation(typeNode)
+    if (type.symbol && type.symbol.exports) {
+      const values: (string | number)[] = []
+      type.symbol.exports.forEach(member => {
+        const declaration = member.valueDeclaration
+        if (declaration && ts.isEnumMember(declaration)) {
+          const value = this.checker.getConstantValue(declaration)
+          if (value !== undefined) {
+            values.push(value)
+          }
+        }
+      })
+
+      if (values.length > 0) {
+        const propertySchema = { type: 'object' } as Property
+        propertySchema.enum = values
+        const isString = values.every(v => typeof v === 'string')
+        const isNumber = values.every(v => typeof v === 'number')
+
+        if (isString) {
+          propertySchema.type = 'string'
+        } else if (isNumber) {
+          propertySchema.type = 'number'
+        } else {
+          propertySchema.type = 'string'
+        }
+
+        if (property.isArray) {
+          const itemsSchema = { ...propertySchema }
+          propertySchema.type = 'array'
+          propertySchema.items = itemsSchema
+          delete propertySchema.enum
+          return propertySchema
+        } else {
+          return propertySchema
+        }
+      }
+    }
+    return undefined
+  }
+
   private getSchemaFromPrimitive(property: PropertyInfo): Property {
+    if (property.isEnum) {
+      const enumSchema = this.getSchemaFromEnum(property)
+      if (enumSchema) {
+        return enumSchema
+      }
+    }
+
     const propertySchema = { type: 'object' } as Property
     const propertyType = property.type.toLowerCase().replace('[]', '').trim()
     let isFile = false
+
     switch (propertyType) {
       case constants.jsPrimitives.String.value:
         propertySchema.type = constants.jsPrimitives.String.value
@@ -1044,11 +1131,46 @@ class SchemaTransformer {
     )
   }
 
-  //Todo: implement properly
   private applyEnumDecorator(
     decorator: DecoratorInfo,
     schema: SchemaType
-  ): void {}
+  ): void {
+    if (decorator.arguments.length === 0) return
+
+    const arg = decorator.arguments[0]
+
+    if (arg && typeof arg === 'object' && 'kind' in arg) {
+      const type = this.checker.getTypeAtLocation(arg as ts.Node)
+
+      if (type.symbol && type.symbol.exports) {
+        const values: (string | number)[] = []
+
+        type.symbol.exports.forEach(member => {
+          const declaration = member.valueDeclaration
+          if (declaration && ts.isEnumMember(declaration)) {
+            const value = this.checker.getConstantValue(declaration)
+            if (value !== undefined) {
+              values.push(value)
+            }
+          }
+        })
+
+        if (values.length > 0) {
+          schema.enum = values
+          const isString = values.every(v => typeof v === 'string')
+          const isNumber = values.every(v => typeof v === 'number')
+
+          if (isString) {
+            schema.type = 'string'
+          } else if (isNumber) {
+            schema.type = 'number'
+          } else {
+            schema.type = 'string'
+          }
+        }
+      }
+    }
+  }
 
   private applyDecorators(property: PropertyInfo, schema: SchemaType): void {
     for (const decorator of property.decorators) {
@@ -1108,22 +1230,30 @@ class SchemaTransformer {
           property.isOptional = true
           break
         case constants.validatorDecorators.MinLength.name:
-          schema.minLength = decorator.arguments[0]
+          schema.minLength = this.getSafeDecoratorArgument(
+            decorator.arguments[0]
+          )
           break
         case constants.validatorDecorators.MaxLength.name:
-          schema.maxLength = decorator.arguments[0]
+          schema.maxLength = this.getSafeDecoratorArgument(
+            decorator.arguments[0]
+          )
           break
         case constants.validatorDecorators.Length.name:
-          schema.minLength = decorator.arguments[0]
+          schema.minLength = this.getSafeDecoratorArgument(
+            decorator.arguments[0]
+          )
           if (decorator.arguments[1]) {
-            schema.maxLength = decorator.arguments[1]
+            schema.maxLength = this.getSafeDecoratorArgument(
+              decorator.arguments[1]
+            )
           }
           break
         case constants.validatorDecorators.Min.name:
-          schema.minimum = decorator.arguments[0]
+          schema.minimum = this.getSafeDecoratorArgument(decorator.arguments[0])
           break
         case constants.validatorDecorators.Max.name:
-          schema.maximum = decorator.arguments[0]
+          schema.maximum = this.getSafeDecoratorArgument(decorator.arguments[0])
           break
         case constants.validatorDecorators.IsPositive.name:
           schema.minimum = 0
@@ -1136,13 +1266,21 @@ class SchemaTransformer {
           property.isOptional = false
           break
         case constants.validatorDecorators.ArrayMinSize.name:
-          schema.minItems = decorator.arguments[0]
+          schema.minItems = this.getSafeDecoratorArgument(
+            decorator.arguments[0]
+          )
           break
         case constants.validatorDecorators.ArrayMaxSize.name:
-          schema.maxItems = decorator.arguments[0]
+          schema.maxItems = this.getSafeDecoratorArgument(
+            decorator.arguments[0]
+          )
           break
         case constants.validatorDecorators.IsEnum.name:
-          this.applyEnumDecorator(decorator, schema)
+          if (!property.isArray) {
+            this.applyEnumDecorator(decorator, schema)
+          } else if (schema.items) {
+            this.applyEnumDecorator(decorator, schema.items)
+          }
           break
       }
     }
