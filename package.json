@@ -65,7 +65,7 @@
   },
   "engineStrict": true,
   "peerDependencies": {
-    "class-validator": "0.14.0"
+    "class-validator": "0.14.2"
   },
   "peerDependenciesMeta": {
     "class-validator": {
@@ -73,16 +73,14 @@
     }
   },
   "dependencies": {
-    "typescript": "5.0.2"
+    "typescript": "5.0.2",
+    "class-validator": "0.14.2"
   },
   "devDependencies": {
     "@rollup/plugin-typescript": "12.1.4",
     "@types/node": "24.2.1",
-    "class-validator": "0.14.2",
-    "glob": "10.3.10",
     "prettier": "3.6.2",
     "rollup": "4.46.2",
-    "socket.io": "4.8.1",
     "tslib": "2.8.1"
   },
   "package": "./package-dist.json"

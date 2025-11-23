@@ -1,5 +1,4 @@
 import typescript from '@rollup/plugin-typescript'
-import { glob } from 'glob'
 
 const isDev = process.env.ROLLUP_WATCH === 'true'
 const isTest = process.env.BUILD_TARGET === 'test'
