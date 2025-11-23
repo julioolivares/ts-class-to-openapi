@@ -57,7 +57,8 @@ class SchemaTransformer {
 
   private getPropertiesByClassDeclaration(
     classNode: ts.ClassDeclaration,
-    visitedDeclarations: Set<ts.ClassDeclaration> = new Set<ts.ClassDeclaration>()
+    visitedDeclarations: Set<ts.ClassDeclaration> = new Set<ts.ClassDeclaration>(),
+    genericTypeMap: Map<string, string> = new Map()
   ): PropertyInfo[] {
     if (visitedDeclarations.has(classNode)) {
       return [] as PropertyInfo[]
@@ -67,7 +68,11 @@ class SchemaTransformer {
 
     // if no heritage clauses, get properties directly from class
     if (!classNode.heritageClauses) {
-      return this.getPropertiesByClassMembers(classNode.members, classNode)
+      return this.getPropertiesByClassMembers(
+        classNode.members,
+        classNode,
+        genericTypeMap
+      )
     } // use heritage clauses to get properties from base classes
     else {
       const heritageClause = classNode.heritageClauses[0]
@@ -88,27 +93,49 @@ class SchemaTransformer {
         const declaration = symbol.declarations?.[0]
 
         if (declaration && ts.isClassDeclaration(declaration)) {
+          const newGenericTypeMap = new Map<string, string>()
+
+          if (declaration.typeParameters && type.typeArguments) {
+            declaration.typeParameters.forEach((param, index) => {
+              const arg = type.typeArguments![index]
+              if (arg) {
+                const resolvedArg = this.getTypeNodeToString(
+                  arg,
+                  genericTypeMap
+                )
+                newGenericTypeMap.set(param.name.text, resolvedArg)
+              }
+            })
+          }
+
           baseProperties = this.getPropertiesByClassDeclaration(
             declaration,
-            visitedDeclarations
+            visitedDeclarations,
+            newGenericTypeMap
           )
         }
 
         properties = this.getPropertiesByClassMembers(
           classNode.members,
-          classNode
+          classNode,
+          genericTypeMap
         )
 
         return baseProperties.concat(properties)
       } else {
-        return this.getPropertiesByClassMembers(classNode.members, classNode)
+        return this.getPropertiesByClassMembers(
+          classNode.members,
+          classNode,
+          genericTypeMap
+        )
       }
     }
   }
 
   private getPropertiesByClassMembers(
     members: ts.NodeArray<ts.ClassElement>,
-    parentClassNode?: ts.ClassDeclaration
+    parentClassNode?: ts.ClassDeclaration,
+    genericTypeMap: Map<string, string> = new Map()
   ) {
     const properties: PropertyInfo[] = []
 
@@ -118,8 +145,19 @@ class SchemaTransformer {
         member.name &&
         ts.isIdentifier(member.name)
       ) {
+        // Skip static, private, and protected properties
+        if (member.modifiers) {
+          const hasExcludedModifier = member.modifiers.some(
+            m =>
+              m.kind === ts.SyntaxKind.StaticKeyword ||
+              m.kind === ts.SyntaxKind.PrivateKeyword ||
+              m.kind === ts.SyntaxKind.ProtectedKeyword
+          )
+          if (hasExcludedModifier) continue
+        }
+
         const propertyName = member.name.text
-        const type = this.getPropertyType(member)
+        const type = this.getPropertyType(member, genericTypeMap)
         const decorators = this.extractDecorators(member)
         const isOptional = !!member.questionToken
         const isGeneric = this.isPropertyTypeGeneric(member)
@@ -204,21 +242,32 @@ class SchemaTransformer {
     return properties
   }
 
-  private getPropertyType(property: ts.PropertyDeclaration): string {
+  private getPropertyType(
+    property: ts.PropertyDeclaration,
+    genericTypeMap: Map<string, string> = new Map()
+  ): string {
     if (property.type) {
-      return this.getTypeNodeToString(property.type)
+      return this.getTypeNodeToString(property.type, genericTypeMap)
     }
 
     const type = this.checker.getTypeAtLocation(property)
     return this.getStringFromType(type)
   }
 
-  private getTypeNodeToString(typeNode: ts.TypeNode): string {
+  private getTypeNodeToString(
+    typeNode: ts.TypeNode,
+    genericTypeMap: Map<string, string> = new Map()
+  ): string {
     if (
       ts.isTypeReferenceNode(typeNode) &&
       ts.isIdentifier(typeNode.typeName)
     ) {
-      if (typeNode.typeName.text.toLowerCase() === 'uploadfile') {
+      const typeName = typeNode.typeName.text
+      if (genericTypeMap.has(typeName)) {
+        return genericTypeMap.get(typeName)!
+      }
+
+      if (typeName.toLowerCase() === 'uploadfile') {
         return 'UploadFile'
       }
 
@@ -249,11 +298,16 @@ class SchemaTransformer {
         return constants.jsPrimitives.Boolean.type
       case ts.SyntaxKind.ArrayType:
         const arrayType = typeNode as ts.ArrayTypeNode
-        return `${this.getTypeNodeToString(arrayType.elementType)}[]`
+        return `${this.getTypeNodeToString(
+          arrayType.elementType,
+          genericTypeMap
+        )}[]`
       case ts.SyntaxKind.UnionType:
         // Handle union types like string | null
         const unionType = typeNode as ts.UnionTypeNode
-        const types = unionType.types.map(t => this.getTypeNodeToString(t))
+        const types = unionType.types.map(t =>
+          this.getTypeNodeToString(t, genericTypeMap)
+        )
         // Filter out null and undefined, return the first meaningful type
         const meaningfulTypes = types.filter(
           t => t !== 'null' && t !== 'undefined'
@@ -267,6 +321,12 @@ class SchemaTransformer {
         return 'object'
       default:
         const typeText = typeNode.getText()
+
+        // Check if this is a generic type parameter we can resolve
+        if (genericTypeMap && genericTypeMap.has(typeText)) {
+          return genericTypeMap.get(typeText)!
+        }
+
         // Handle some common TypeScript utility types
         if (typeText.startsWith('Date')) return constants.jsPrimitives.Date.type
         if (typeText.includes('Buffer') || typeText.includes('Uint8Array'))
@@ -630,7 +690,12 @@ class SchemaTransformer {
     )
       return true
 
-    if (Array.isArray(value) && ts.isArrayTypeNode(typeNode)) return true
+    if (Array.isArray(value) && ts.isArrayTypeNode(typeNode)) {
+      if (value.length === 0) return true
+      const firstItem = value[0]
+      const elementType = typeNode.elementType
+      return this.checkTypeMatch(firstItem, elementType)
+    }
 
     if (runtimeType === 'object' && value !== null && !Array.isArray(value)) {
       if (
@@ -671,6 +736,26 @@ class SchemaTransformer {
       })
     } catch (e) {
       // Ignore instantiation errors (e.g. required constructor arguments)
+    }
+
+    // Try to get properties from class-validator metadata
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { getMetadataStorage } = require('class-validator')
+      const metadata = getMetadataStorage()
+      const targetMetadata = metadata.getTargetValidationMetadatas(
+        cls,
+        null,
+        false,
+        false
+      )
+      targetMetadata.forEach((m: any) => {
+        if (m.propertyName && !runtimeProperties.has(m.propertyName)) {
+          runtimeProperties.set(m.propertyName, undefined)
+        }
+      })
+    } catch (e) {
+      // Ignore if class-validator is not available or fails
     }
 
     // console.log(`[findBestMatch] Class: ${cls.name}, Runtime Props: ${Array.from(runtimeProperties.keys()).join(', ')}`)
