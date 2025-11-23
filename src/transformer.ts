@@ -559,50 +559,193 @@ class SchemaTransformer {
     return SchemaTransformer.instance
   }
 
-  private getSourceFileByClassName(
-    className: string,
+  private getSourceFileByClass(
+    cls: Function,
     sourceOptions?: {
       isExternal: boolean
       packageName: string
       filePath?: string
     }
   ): { sourceFile: ts.SourceFile; node: ts.ClassDeclaration } | undefined {
-    let sourceFiles: ts.SourceFile[] = []
+    const className = cls.name
+    const sourceFiles = this.getFilteredSourceFiles(sourceOptions)
+    const matches: { sourceFile: ts.SourceFile; node: ts.ClassDeclaration }[] =
+      []
 
+    for (const sourceFile of sourceFiles) {
+      const node = sourceFile.statements.find(
+        stmt =>
+          ts.isClassDeclaration(stmt) &&
+          stmt.name &&
+          stmt.name.text === className
+      ) as ts.ClassDeclaration | undefined
+
+      if (node) {
+        matches.push({ sourceFile, node })
+      }
+    }
+
+    if (matches.length === 0) {
+      return undefined
+    }
+
+    if (matches.length === 1) {
+      return matches[0]
+    }
+
+    if (matches.length > 1 && !sourceOptions?.filePath) {
+      const bestMatch = this.findBestMatch(cls, matches)
+
+      if (bestMatch) {
+        return bestMatch
+      }
+
+      const firstMatch = matches[0]
+      if (firstMatch) {
+        console.warn(
+          `[ts-class-to-openapi] Warning: Found multiple classes with name '${className}'. Using the first one found in '${firstMatch.sourceFile.fileName}'. To resolve this collision, provide 'sourceOptions.filePath'.`
+        )
+      }
+    }
+
+    return matches[0]
+  }
+
+  private checkTypeMatch(value: any, typeNode: ts.TypeNode): boolean {
+    const runtimeType = typeof value
+
+    if (
+      runtimeType === 'string' &&
+      typeNode.kind === ts.SyntaxKind.StringKeyword
+    )
+      return true
+    if (
+      runtimeType === 'number' &&
+      typeNode.kind === ts.SyntaxKind.NumberKeyword
+    )
+      return true
+    if (
+      runtimeType === 'boolean' &&
+      typeNode.kind === ts.SyntaxKind.BooleanKeyword
+    )
+      return true
+
+    if (Array.isArray(value) && ts.isArrayTypeNode(typeNode)) return true
+
+    if (runtimeType === 'object' && value !== null && !Array.isArray(value)) {
+      if (
+        ts.isTypeReferenceNode(typeNode) ||
+        typeNode.kind === ts.SyntaxKind.ObjectKeyword
+      ) {
+        return true
+      }
+    }
+
+    return false
+  }
+
+  private findBestMatch(
+    cls: Function,
+    matches: { sourceFile: ts.SourceFile; node: ts.ClassDeclaration }[]
+  ): { sourceFile: ts.SourceFile; node: ts.ClassDeclaration } | undefined {
+    const runtimeSource = cls.toString()
+    const runtimeProperties = new Map<string, any>()
+    const regexProperties = new Set<string>()
+
+    // Try to extract properties from runtime source (assignments in constructor)
+    try {
+      const regex = /this\.([a-zA-Z0-9_$]+)\s*=/g
+      let match
+      while ((match = regex.exec(runtimeSource)) !== null) {
+        regexProperties.add(match[1])
+      }
+    } catch (e) {
+      // Ignore regex errors
+    }
+
+    // Try to instantiate the class to find properties
+    try {
+      const instance = new (cls as any)()
+      Object.keys(instance).forEach(key => {
+        runtimeProperties.set(key, (instance as any)[key])
+      })
+    } catch (e) {
+      // Ignore instantiation errors (e.g. required constructor arguments)
+    }
+
+    // console.log(`[findBestMatch] Class: ${cls.name}, Runtime Props: ${Array.from(runtimeProperties.keys()).join(', ')}`)
+
+    const scores = matches.map(match => {
+      let score = 0
+      for (const member of match.node.members) {
+        if (ts.isMethodDeclaration(member) && ts.isIdentifier(member.name)) {
+          if (runtimeSource.includes(member.name.text)) {
+            score += 2
+          }
+        } else if (
+          ts.isPropertyDeclaration(member) &&
+          ts.isIdentifier(member.name)
+        ) {
+          const propName = member.name.text
+          if (runtimeProperties.has(propName)) {
+            score += 1
+            const value = runtimeProperties.get(propName)
+            if (member.type && this.checkTypeMatch(value, member.type)) {
+              score += 5
+            }
+          } else if (regexProperties.has(propName)) {
+            score += 1
+          }
+        }
+      }
+      return { match, score }
+    })
+
+    scores.sort((a, b) => b.score - a.score)
+
+    const firstScore = scores[0]
+    const secondScore = scores[1]
+
+    if (firstScore && firstScore.score > 0) {
+      if (
+        scores.length === 1 ||
+        (secondScore && firstScore.score > secondScore.score)
+      ) {
+        return firstScore.match
+      }
+    }
+
+    return undefined
+  }
+
+  private getFilteredSourceFiles(sourceOptions?: {
+    isExternal: boolean
+    packageName: string
+    filePath?: string
+  }): ts.SourceFile[] {
     if (sourceOptions?.isExternal) {
-      sourceFiles = this.program.getSourceFiles().filter(sf => {
+      return this.program.getSourceFiles().filter(sf => {
         return (
           sf.fileName.includes(sourceOptions.packageName) &&
           (!sourceOptions.filePath || sf.fileName === sourceOptions.filePath)
         )
       })
-    } else {
-      sourceFiles = this.program.getSourceFiles().filter(sf => {
-        if (sf.isDeclarationFile) return false
-        if (sf.fileName.includes('.d.ts')) return false
-        if (sf.fileName.includes('node_modules')) return false
-
-        return true
-      })
     }
 
-    for (const sourceFile of sourceFiles) {
-      let node: ts.ClassDeclaration | undefined
+    return this.program.getSourceFiles().filter(sf => {
+      if (sf.isDeclarationFile) return false
+      if (sf.fileName.includes('.d.ts')) return false
+      if (sf.fileName.includes('node_modules')) return false
 
-      const found = sourceFile.statements.some(stmt => {
-        node = stmt as ts.ClassDeclaration
-
-        return (
-          ts.isClassDeclaration(stmt) &&
-          stmt.name &&
-          stmt.name.text === className
-        )
-      })
-
-      if (found) {
-        return { sourceFile, node: node as ts.ClassDeclaration }
+      if (
+        sourceOptions?.filePath &&
+        !sf.fileName.includes(sourceOptions.filePath)
+      ) {
+        return false
       }
-    }
+
+      return true
+    })
   }
 
   private isEnum(propertyDeclaration: ts.PropertyDeclaration): boolean {
@@ -1296,7 +1439,7 @@ class SchemaTransformer {
   ): { name: string; schema: SchemaType } {
     let schema: SchemaType = { type: 'object', properties: {} }
 
-    const result = this.getSourceFileByClassName(cls.name, sourceOptions)
+    const result = this.getSourceFileByClass(cls, sourceOptions)
 
     if (!result?.sourceFile) {
       console.warn(`Class ${cls.name} not found in any source file.`)
