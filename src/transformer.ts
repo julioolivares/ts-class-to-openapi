@@ -1230,6 +1230,8 @@ class SchemaTransformer {
 
     transformedSchema.set(declaration.name.text, schema)
 
+    visitedClass.delete(declaration)
+
     return schema
   }
 
