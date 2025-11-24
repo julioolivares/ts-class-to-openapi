@@ -26,6 +26,13 @@ class SchemaTransformer {
 
   private processingClasses = new Set<string>()
 
+  private sourceFiles: ts.SourceFile[]
+
+  private classFileIndex = new Map<
+    string,
+    { sourceFile: ts.SourceFile; node: ts.ClassDeclaration }[]
+  >()
+
   private constructor(
     tsConfigPath: string = constants.TS_CONFIG_DEFAULT_PATH,
     options: TransformerOptions = {}
@@ -53,6 +60,24 @@ class SchemaTransformer {
 
     this.program = ts.createProgram(fileNames, tsOptions)
     this.checker = this.program.getTypeChecker()
+
+    this.sourceFiles = this.program.getSourceFiles().filter(sf => {
+      if (sf.isDeclarationFile) return false
+      if (sf.fileName.includes('.d.ts')) return false
+      if (sf.fileName.includes('node_modules')) return false
+      return true
+    }) as ts.SourceFile[]
+
+    this.sourceFiles.forEach(sf => {
+      sf.statements.forEach(stmt => {
+        if (ts.isClassDeclaration(stmt) && stmt.name) {
+          const name = stmt.name.text
+          const entry = this.classFileIndex.get(name) || []
+          entry.push({ sourceFile: sf, node: stmt })
+          this.classFileIndex.set(name, entry)
+        }
+      })
+    })
   }
 
   private getPropertiesByClassDeclaration(
@@ -628,20 +653,28 @@ class SchemaTransformer {
     }
   ): { sourceFile: ts.SourceFile; node: ts.ClassDeclaration } | undefined {
     const className = cls.name
-    const sourceFiles = this.getFilteredSourceFiles(sourceOptions)
-    const matches: { sourceFile: ts.SourceFile; node: ts.ClassDeclaration }[] =
-      []
+    let matches: { sourceFile: ts.SourceFile; node: ts.ClassDeclaration }[] = []
 
-    for (const sourceFile of sourceFiles) {
-      const node = sourceFile.statements.find(
-        stmt =>
-          ts.isClassDeclaration(stmt) &&
-          stmt.name &&
-          stmt.name.text === className
-      ) as ts.ClassDeclaration | undefined
+    if (sourceOptions?.isExternal) {
+      const sourceFiles = this.getFilteredSourceFiles(sourceOptions)
+      for (const sourceFile of sourceFiles) {
+        const node = sourceFile.statements.find(
+          stmt =>
+            ts.isClassDeclaration(stmt) &&
+            stmt.name &&
+            stmt.name.text === className
+        ) as ts.ClassDeclaration | undefined
 
-      if (node) {
-        matches.push({ sourceFile, node })
+        if (node) {
+          matches.push({ sourceFile, node })
+        }
+      }
+    } else {
+      matches = this.classFileIndex.get(className) || []
+      if (sourceOptions?.filePath) {
+        matches = matches.filter(m =>
+          m.sourceFile.fileName.includes(sourceOptions.filePath!)
+        )
       }
     }
 
@@ -817,11 +850,7 @@ class SchemaTransformer {
       })
     }
 
-    return this.program.getSourceFiles().filter(sf => {
-      if (sf.isDeclarationFile) return false
-      if (sf.fileName.includes('.d.ts')) return false
-      if (sf.fileName.includes('node_modules')) return false
-
+    return this.sourceFiles.filter(sf => {
       if (
         sourceOptions?.filePath &&
         !sf.fileName.includes(sourceOptions.filePath)
