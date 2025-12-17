@@ -61,13 +61,12 @@ class SchemaTransformer {
     this.program = ts.createProgram(fileNames, tsOptions)
     this.checker = this.program.getTypeChecker()
 
-    this.sourceFiles =
-      this.program.getSourceFiles() as ts.SourceFile[] /* .filter(sf => {
+    this.sourceFiles = this.program.getSourceFiles().filter(sf => {
       if (sf.isDeclarationFile) return false
       if (sf.fileName.includes('.d.ts')) return false
       if (sf.fileName.includes('node_modules')) return false
       return true
-    }) as ts.SourceFile[] */
+    }) as ts.SourceFile[]
 
     this.sourceFiles.forEach(sf => {
       sf.statements.forEach(stmt => {
