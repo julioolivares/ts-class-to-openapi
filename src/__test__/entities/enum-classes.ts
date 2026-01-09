@@ -37,10 +37,20 @@ export class ArrayEnumTestEntity {
 
   @IsEnum(OrderStatus, { each: true })
   statuses: OrderStatus[]
+
+  @IsOptional()
+  files: UploadFileDto[]
+}
+
+class UploadFileDto {
+  name: string
+  type: string
+  size: number
 }
 
 export class PureEnumTestEntity {
   role: UserRole
   status: OrderStatus
   mixed: MixedEnum
+  files?: UploadFileDto[]
 }

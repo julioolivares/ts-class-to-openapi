@@ -296,6 +296,10 @@ class SchemaTransformer {
         return 'UploadFile'
       }
 
+      if (typeName.toLowerCase() === 'uploadfiledto') {
+        return 'UploadFileDto'
+      }
+
       if (typeNode.typeArguments && typeNode.typeArguments.length > 0) {
         const firstTypeArg = typeNode.typeArguments[0]
         if (
@@ -617,6 +621,7 @@ class SchemaTransformer {
       constants.jsPrimitives.Uint8Array.type.toLowerCase(),
       constants.jsPrimitives.File.type.toLowerCase(),
       constants.jsPrimitives.UploadFile.type.toLowerCase(),
+      constants.jsPrimitives.UploadFileDto.type.toLowerCase(),
       constants.jsPrimitives.BigInt.type.toLowerCase(),
       constants.jsPrimitives.Symbol.type.toLowerCase(),
       constants.jsPrimitives.null.type.toLowerCase(),
@@ -1314,6 +1319,7 @@ class SchemaTransformer {
       case constants.jsPrimitives.Uint8Array.type.toLocaleLowerCase():
       case constants.jsPrimitives.File.type.toLocaleLowerCase():
       case constants.jsPrimitives.UploadFile.type.toLocaleLowerCase():
+      case constants.jsPrimitives.UploadFileDto.type.toLocaleLowerCase():
         propertySchema.type = constants.jsPrimitives.UploadFile.value
         propertySchema.format = constants.jsPrimitives.UploadFile.format
         isFile = true

@@ -27,6 +27,7 @@ const jsPrimitives = {
   Buffer: { type: 'Buffer', value: 'string', format: 'binary' },
   Uint8Array: { type: 'Uint8Array', value: 'string', format: 'binary' },
   UploadFile: { type: 'UploadFile', value: 'string', format: 'binary' },
+  UploadFileDto: { type: 'UploadFileDto', value: 'string', format: 'binary' },
   File: { type: 'File', value: 'string', format: 'binary' },
 }
 
