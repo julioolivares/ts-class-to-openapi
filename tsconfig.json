@@ -45,10 +45,6 @@
     "experimentalDecorators": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": [
-    "src/**/*.ts",
-    "examples/**/*.ts",
-    "src/__test__/entities/**/*.ts"
-  ],
+  "include": ["src/**/*.ts", "examples/**/*.ts", "test/**/*.ts"],
   "exclude": ["dist/*"]
 }

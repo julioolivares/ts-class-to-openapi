@@ -18,7 +18,7 @@
       "command": "npm run test:watch",
       "skipFiles": ["<node_internals>/**"],
       "sourceMaps": true,
-      "internalConsoleOptions": "openOnSessionStart"
+      "internalConsoleOptions": "neverOpen"
     }
   ]
 }

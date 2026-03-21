@@ -5,6 +5,7 @@
   "main": "./dist/index.js",
   "module": "./dist/index.esm.js",
   "types": "./dist/index.d.ts",
+  "type": "module",
   "typings": "./dist/index.d.ts",
   "exports": {
     ".": {
@@ -19,13 +20,12 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "npm run build:test && node --test dist/test.js",
-    "test:watch": "npm run build:test && node --test --watch dist/**/*.test.js",
-    "test:coverage": "npm run build:test && node --test --experimental-test-coverage dist/**/*.test.js",
+    "test": "node --import tsx --test test/testCases/**/*.test.ts",
+    "test:watch": "node --import tsx --inspect --test --watch test/testCases/**/*.test.ts",
+    "test:coverage": "node --import tsx --test --experimental-test-coverage test/testCases/**/*.test.ts",
     "build": "rm -rf dist && rollup -c",
-    "build:test": "rm -rf dist && BUILD_TARGET=test rollup -c",
     "build:watch": "rm -rf dist && rollup -c -w",
-    "dev": "node --trace-deprecation  --watch dist/run.js",
+    "dev": "node --import tsx --test --inspect --watch ./src/run.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "prepublish": "pnpm run build"
@@ -73,15 +73,16 @@
     }
   },
   "dependencies": {
-    "typescript": "5.0.2",
-    "class-validator": "0.14.2"
+    "class-validator": "0.14.2",
+    "typescript": "5.0.2"
   },
   "devDependencies": {
     "@rollup/plugin-typescript": "12.1.4",
     "@types/node": "24.2.1",
     "prettier": "3.6.2",
     "rollup": "4.46.2",
-    "tslib": "2.8.1"
+    "tslib": "2.8.1",
+    "tsx": "4.21.0"
   },
   "package": "./package-dist.json"
 }
