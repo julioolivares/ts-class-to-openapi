@@ -32,7 +32,8 @@
     "dev": "node --import tsx --test --inspect --watch ./src/run.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "prepublish": "pnpm build"
+    "prepublish": "pnpm build",
+    "postpublish": "git push && git push --tags"
   },
   "repository": {
     "type": "git",
