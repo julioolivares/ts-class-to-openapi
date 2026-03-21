@@ -7,7 +7,6 @@ import {
   TransformerOptions,
 } from './types'
 import { constants } from './transformer.fixtures'
-import { format } from 'node:path'
 
 class SchemaTransformer {
   private static instance: SchemaTransformer | null | undefined = null
@@ -16,7 +15,7 @@ class SchemaTransformer {
 
   private checker: ts.TypeChecker
 
-  private classCache = new Map<string, any>()
+  private classCache: WeakMap<Function, any> = new WeakMap<Function, any>()
 
   private readonly maxCacheSize: number
 
@@ -168,20 +167,20 @@ class SchemaTransformer {
       if (
         ts.isPropertyDeclaration(member) &&
         member.name &&
-        ts.isIdentifier(member.name)
+        (member.name as ts.Identifier)?.text
       ) {
         // Skip static, private, and protected properties
         if (member.modifiers) {
           const hasExcludedModifier = member.modifiers.some(
             m =>
-              m.kind === ts.SyntaxKind.StaticKeyword ||
+              // m.kind === ts.SyntaxKind.StaticKeyword ||
               m.kind === ts.SyntaxKind.PrivateKeyword ||
               m.kind === ts.SyntaxKind.ProtectedKeyword
           )
           if (hasExcludedModifier) continue
         }
 
-        const propertyName = member.name.text
+        const propertyName = (member.name as ts.Identifier).text
         const type = this.getPropertyType(member, genericTypeMap)
         const decorators = this.extractDecorators(member)
         const isOptional = !!member.questionToken
@@ -1559,13 +1558,25 @@ class SchemaTransformer {
       filePath?: string
     }
   ): { name: string; schema: SchemaType } {
+    if (this.classCache.has(cls)) {
+      return this.classCache.get(cls)!
+    }
+
     let schema: SchemaType = { type: 'object', properties: {} }
 
     const result = this.getSourceFileByClass(cls, sourceOptions)
 
-    if (!result?.sourceFile) {
+    if (!result || !result?.sourceFile) {
       console.warn(`Class ${cls.name} not found in any source file.`)
-      return { name: cls.name, schema: {} as SchemaType }
+      return {
+        name: cls.name,
+        schema: {
+          type: 'object',
+          required: [],
+          properties: {},
+          additionalProperties: true,
+        },
+      }
     }
 
     const properties = this.getPropertiesByClassDeclaration(result.node)
@@ -1588,5 +1599,6 @@ export function transform<T>(
 } {
   // Use the singleton instance instead of creating a temporary one
   const transformer = SchemaTransformer.getInstance(undefined, options)
+
   return transformer.transform(cls, options?.sourceOptions)
 }
