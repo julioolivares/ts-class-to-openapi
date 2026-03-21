@@ -1,0 +1,10 @@
+/* import './testCases/pure-classes.test'
+import './testCases/decorated-classes.test'
+import './testCases/nested-classes.test'
+import './testCases/enum-properties.test'
+import './testCases/collision.test'
+import './testCases/collision-advanced.test'
+import './testCases/generics-and-modifiers.test'
+import './testCases/nested-reuse.test'
+import './testCases/schema-validation.test' */
+import './testCases/edge-cases.test'
