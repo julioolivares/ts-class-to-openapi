@@ -7,7 +7,7 @@ import { ArrayCollision as StringArrayClass } from '../entities/collision/arrays
 import { ArrayCollision as NumberArrayClass } from '../entities/collision/arrays/number-array'
 
 describe('Advanced Class Collision Handling', () => {
-  /* it('should correctly identify throwing classes using metadata or other means', () => {
+  it('should correctly identify throwing classes using metadata or other means', () => {
     // This is expected to fail currently if we rely only on instantiation
     const { schema: schemaA } = transform(ClassA)
     assert.strictEqual(
@@ -32,7 +32,7 @@ describe('Advanced Class Collision Handling', () => {
       undefined,
       'Should not find uniqueA in ClassB'
     )
-  }) */
+  })
 
   it('should correctly identify classes with different array content types', () => {
     // This is expected to fail currently as checkTypeMatch is loose for arrays

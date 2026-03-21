@@ -750,94 +750,34 @@ class SchemaTransformer {
     cls: Function,
     matches: { sourceFile: ts.SourceFile; node: ts.ClassDeclaration }[]
   ): { sourceFile: ts.SourceFile; node: ts.ClassDeclaration } | undefined {
-    const runtimeSource = cls.toString()
-    const runtimeProperties = new Map<string, any>()
-    const regexProperties = new Set<string>()
+    let instance: any = {}
 
-    // Try to extract properties from runtime source (assignments in constructor)
     try {
-      const regex = /this\.([a-zA-Z0-9_$]+)\s*=/g
-      let match
-      while ((match = regex.exec(runtimeSource)) !== null) {
-        regexProperties.add(match[1])
-      }
-    } catch (e) {
-      // Ignore regex errors
+      instance = new (cls as any)()
+    } catch {
+      instance = {}
     }
 
-    // Try to instantiate the class to find properties
-    try {
-      const instance = new (cls as any)()
-      Object.keys(instance).forEach(key => {
-        runtimeProperties.set(key, (instance as any)[key])
+    const instanceProperties = Object.keys(instance)
+
+    let matchesMap = {}
+
+    matches.forEach((match, index) => {
+      let fountProperties: number = 0
+      match.node.members.map(member => {
+        if (member.name && instanceProperties.includes(member.name.getText()))
+          fountProperties++
       })
-    } catch (e) {
-      // Ignore instantiation errors (e.g. required constructor arguments)
-    }
-
-    // Try to get properties from class-validator metadata
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { getMetadataStorage } = require('class-validator')
-      const metadata = getMetadataStorage()
-      const targetMetadata = metadata.getTargetValidationMetadatas(
-        cls,
-        null,
-        false,
-        false
-      )
-      targetMetadata.forEach((m: any) => {
-        if (m.propertyName && !runtimeProperties.has(m.propertyName)) {
-          runtimeProperties.set(m.propertyName, undefined)
-        }
-      })
-    } catch (e) {
-      // Ignore if class-validator is not available or fails
-    }
-
-    // console.log(`[findBestMatch] Class: ${cls.name}, Runtime Props: ${Array.from(runtimeProperties.keys()).join(', ')}`)
-
-    const scores = matches.map(match => {
-      let score = 0
-      for (const member of match.node.members) {
-        if (ts.isMethodDeclaration(member) && ts.isIdentifier(member.name)) {
-          if (runtimeSource.includes(member.name.text)) {
-            score += 2
-          }
-        } else if (
-          ts.isPropertyDeclaration(member) &&
-          ts.isIdentifier(member.name)
-        ) {
-          const propName = member.name.text
-          if (runtimeProperties.has(propName)) {
-            score += 1
-            const value = runtimeProperties.get(propName)
-            if (member.type && this.checkTypeMatch(value, member.type)) {
-              score += 5
-            }
-          } else if (regexProperties.has(propName)) {
-            score += 1
-          }
-        }
-      }
-      return { match, score }
+      matchesMap[index] = fountProperties
     })
 
-    scores.sort((a, b) => b.score - a.score)
+    const maxMatches = Math.max(
+      ...(Object.values(matchesMap) as unknown as number[])
+    )
 
-    const firstScore = scores[0]
-    const secondScore = scores[1]
-
-    if (firstScore && firstScore.score > 0) {
-      if (
-        scores.length === 1 ||
-        (secondScore && firstScore.score > secondScore.score)
-      ) {
-        return firstScore.match
-      }
-    }
-
-    return undefined
+    return matches[
+      Object.values(matchesMap).findIndex(value => value === maxMatches)
+    ]
   }
 
   private getFilteredSourceFiles(sourceOptions?: {
