@@ -5,10 +5,18 @@
       "type": "node-terminal",
       "request": "launch",
       "name": "Dev",
-      "preLaunchTask": "build:watch",
       "command": "npm run dev",
       "skipFiles": ["<node_internals>/**"],
       "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      "sourceMaps": true,
+      "internalConsoleOptions": "openOnSessionStart"
+    },
+    {
+      "name": "Test",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "npm run test:watch",
+      "skipFiles": ["<node_internals>/**"],
       "sourceMaps": true,
       "internalConsoleOptions": "openOnSessionStart"
     }
