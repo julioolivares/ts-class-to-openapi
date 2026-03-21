@@ -8,4 +8,5 @@ export default defineConfig({
   inputOptions: {
     resolve: { mainFields: ['module', 'main'] },
   },
+  failOnWarn: true,
 })
