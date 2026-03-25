@@ -1,6 +1,5 @@
 import { transform } from '../src/transformer.js'
 import { UserEntity } from './entities/user.entity.js'
-import { Role } from './entities/role.entity.js'
 
 // Test classes without decorators
 class PlainUser {
