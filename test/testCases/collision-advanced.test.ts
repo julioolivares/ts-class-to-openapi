@@ -1,10 +1,10 @@
 import assert from 'node:assert'
 import { describe, it } from 'node:test'
-import { transform } from '../../src'
-import { ThrowingClass as ClassA } from '../entities/collision/throwing/class-a'
-import { ThrowingClass as ClassB } from '../entities/collision/throwing/class-b'
-import { ArrayCollision as StringArrayClass } from '../entities/collision/arrays/string-array'
-import { ArrayCollision as NumberArrayClass } from '../entities/collision/arrays/number-array'
+import { transform } from '../../src/index.js'
+import { ThrowingClass as ClassA } from '../entities/collision/throwing/class-a.js'
+import { ThrowingClass as ClassB } from '../entities/collision/throwing/class-b.js'
+import { ArrayCollision as StringArrayClass } from '../entities/collision/arrays/string-array.js'
+import { ArrayCollision as NumberArrayClass } from '../entities/collision/arrays/number-array.js'
 
 describe('Advanced Class Collision Handling', () => {
   it('should correctly identify throwing classes using metadata or other means', () => {

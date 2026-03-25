@@ -1,13 +1,13 @@
 import { test } from 'node:test'
 import assert from 'node:assert'
-import { transform } from '../../src'
+import { transform } from '../../src/index.js'
 import {
   RootClass,
   DeepRoot,
   ArrayRoot,
   SiblingRoot,
   CircularNode,
-} from '../entities/nested-reuse-classes'
+} from '../entities/nested-reuse-classes.js'
 
 test('should handle nested reused classes correctly (Diamond Problem)', async t => {
   const result = transform(RootClass)

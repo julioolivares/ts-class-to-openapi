@@ -3,7 +3,7 @@
  */
 import { test, describe } from 'node:test'
 import assert from 'node:assert'
-import { transform } from '../../src'
+import { transform } from '../../src/index.js'
 import {
   EmptyClass,
   StaticOnlyClass,
@@ -13,7 +13,7 @@ import {
   ComplexUnionClass,
   ReadonlyClass,
   AccessModifierClass,
-} from '../entities/edge-case-classes'
+} from '../entities/edge-case-classes.js'
 
 describe('Edge Cases and Error Handling', () => {
   test('should handle empty class', () => {

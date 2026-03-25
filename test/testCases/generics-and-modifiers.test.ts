@@ -1,8 +1,8 @@
 import assert from 'node:assert'
 import { describe, it } from 'node:test'
-import { transform } from '../../src'
-import { AccessorAndModifiers } from '../entities/evaluation/modifiers'
-import { ConcreteString } from '../entities/evaluation/generics'
+import { transform } from '../../src/index.js'
+import { AccessorAndModifiers } from '../entities/evaluation/modifiers.js'
+import { ConcreteString } from '../entities/evaluation/generics.js'
 
 describe('Evaluation of Edge Cases', () => {
   it('should handle modifiers correctly (exclude private/static, include getters?)', () => {

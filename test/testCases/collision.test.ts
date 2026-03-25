@@ -1,8 +1,8 @@
 import assert from 'node:assert'
 import { describe, it } from 'node:test'
-import { transform } from '../../src'
-import { SameNameClass as StringClass } from '../entities/collision/string-props/same-name'
-import { SameNameClass as NumberClass } from '../entities/collision/number-props/same-name'
+import { transform } from '../../src/index.js'
+import { SameNameClass as StringClass } from '../entities/collision/string-props/same-name.js'
+import { SameNameClass as NumberClass } from '../entities/collision/number-props/same-name.js'
 
 describe('Class Name Collision Handling', () => {
   it('should correctly identify class with string properties', () => {
