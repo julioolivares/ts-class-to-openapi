@@ -1,7 +1,7 @@
-import { transform } from './transformer'
+import { transform } from './transformer.js'
 
-import { PureEnumTestEntity, MixedEnum } from './__test__/entities/enum-classes'
+import { Product } from '../test/entities/pure-classes.js'
 
-const { name, schema } = transform(PureEnumTestEntity)
+const { name, schema } = transform(Product)
 
 console.log(JSON.stringify({ name, schema }, null, 2))

@@ -5,10 +5,10 @@ import {
   PropertyInfo,
   SchemaType,
   TransformerOptions,
-} from './types'
-import { constants } from './transformer.fixtures'
+} from './types.js'
+import { constants } from './transformer.fixtures.js'
 
-class SchemaTransformer {
+export class SchemaTransformer {
   private static instance: SchemaTransformer | null | undefined = null
 
   private program: ts.Program
@@ -20,12 +20,6 @@ class SchemaTransformer {
   private readonly maxCacheSize: number
 
   private readonly autoCleanup: boolean
-
-  private loadedFiles = new Set<string>()
-
-  private processingClasses = new Set<string>()
-
-  private sourceFiles: ts.SourceFile[]
 
   private classFileIndex = new Map<
     string,
@@ -60,14 +54,7 @@ class SchemaTransformer {
     this.program = ts.createProgram(fileNames, tsOptions)
     this.checker = this.program.getTypeChecker()
 
-    this.sourceFiles = this.program.getSourceFiles().filter(sf => {
-      if (sf.isDeclarationFile) return false
-      if (sf.fileName.includes('.d.ts')) return false
-      if (sf.fileName.includes('node_modules')) return false
-      return true
-    }) as ts.SourceFile[]
-
-    this.sourceFiles.forEach(sf => {
+    this.program.getSourceFiles().forEach(sf => {
       sf.statements.forEach(stmt => {
         if (ts.isClassDeclaration(stmt) && stmt.name) {
           const name = stmt.name.text
@@ -794,7 +781,7 @@ class SchemaTransformer {
       })
     }
 
-    return this.sourceFiles.filter(sf => {
+    return this.program.getSourceFiles().filter(sf => {
       if (
         sourceOptions?.filePath &&
         !sf.fileName.includes(sourceOptions.filePath)
