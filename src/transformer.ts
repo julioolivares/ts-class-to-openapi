@@ -335,6 +335,15 @@ export class SchemaTransformer {
         }
         return 'object'
       default:
+        // Resolve indexed access types (e.g., (typeof Obj)[keyof typeof Obj]) via the type checker
+        if (ts.isIndexedAccessTypeNode(typeNode)) {
+          const resolvedType = this.checker.getTypeAtLocation(typeNode)
+          const resolved = this.checker.typeToString(resolvedType)
+          if (this.isPrimitiveType(resolved)) {
+            return resolved
+          }
+        }
+
         const typeText = typeNode.getText()
 
         // Check if this is a generic type parameter we can resolve
