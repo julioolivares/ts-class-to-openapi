@@ -54,3 +54,41 @@ export class PureEnumTestEntity {
   mixed: MixedEnum
   files?: UploadFileDto[]
 }
+
+// Literal object enums (const objects used as enums)
+export const StringLiteralEnum = {
+  ADMIN: 'admin',
+  USER: 'user',
+  MODERATOR: 'moderator',
+} as const
+
+export const NumericLiteralEnum = {
+  LOW: 1,
+  MEDIUM: 2,
+  HIGH: 3,
+} as const
+
+export const MixedLiteralEnum = {
+  YES: 'yes',
+  NO: 0,
+} as const
+
+export class LiteralEnumTestEntity {
+  @IsEnum(StringLiteralEnum)
+  role: (typeof StringLiteralEnum)[keyof typeof StringLiteralEnum]
+
+  @IsEnum(NumericLiteralEnum)
+  priority: (typeof NumericLiteralEnum)[keyof typeof NumericLiteralEnum]
+
+  @IsOptional()
+  @IsEnum(MixedLiteralEnum)
+  mixed: (typeof MixedLiteralEnum)[keyof typeof MixedLiteralEnum]
+}
+
+export class ArrayLiteralEnumTestEntity {
+  @IsEnum(StringLiteralEnum, { each: true })
+  roles: (typeof StringLiteralEnum)[keyof typeof StringLiteralEnum][]
+
+  @IsEnum(NumericLiteralEnum, { each: true })
+  priorities: (typeof NumericLiteralEnum)[keyof typeof NumericLiteralEnum][]
+}

@@ -1,7 +1,33 @@
-import { transform } from './transformer.js'
+import { transform } from './index.js'
+import { IsEnum } from 'class-validator'
 
-import { Product } from '../test/entities/pure-classes.js'
+const UserType = {
+  ADMIN: 'admin',
+  USER: 'user',
+  MODERATOR: 'moderator',
+}
 
-const { name, schema } = transform(Product)
+enum Priority {
+  LOW = 1,
+  MEDIUM = 2,
+  HIGH = 3,
+}
 
-console.log(JSON.stringify({ name, schema }, null, 2))
+class Task {
+  @IsEnum(UserType)
+  assignedTo: (typeof UserType)[keyof typeof UserType]
+
+  // Pure TypeScript enum (automatically detected without decorator)
+  status: number
+
+  /*  @IsEnum(Priority)
+  priority?: Priority
+
+  title: string
+  completed: boolean
+  dueDate: Date */
+}
+
+const schema = transform(Task)
+
+console.log(JSON.stringify(schema, null, 2))
