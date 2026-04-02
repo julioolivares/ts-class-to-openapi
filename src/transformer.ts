@@ -335,6 +335,15 @@ export class SchemaTransformer {
         }
         return 'object'
       default:
+        // Resolve indexed access types (e.g., (typeof Obj)[keyof typeof Obj]) via the type checker
+        if (ts.isIndexedAccessTypeNode(typeNode)) {
+          const resolvedType = this.checker.getTypeAtLocation(typeNode)
+          const resolved = this.checker.typeToString(resolvedType)
+          if (this.isPrimitiveType(resolved)) {
+            return resolved
+          }
+        }
+
         const typeText = typeNode.getText()
 
         // Check if this is a generic type parameter we can resolve
@@ -1331,8 +1340,20 @@ export class SchemaTransformer {
     const arg = decorator.arguments[0]
 
     if (arg && typeof arg === 'object' && 'kind' in arg) {
+      // Handle inline array literals (e.g., @IsEnum(['admin', 'user', 'moderator']))
+      if (ts.isArrayLiteralExpression(arg as ts.Node)) {
+        const values = this.extractValuesFromArrayLiteral(
+          arg as ts.ArrayLiteralExpression
+        )
+        if (values.length > 0) {
+          this.applyEnumValues(values, schema)
+        }
+        return
+      }
+
       const type = this.checker.getTypeAtLocation(arg as ts.Node)
 
+      // Handle real TypeScript enums (type.symbol.exports contains EnumMembers)
       if (type.symbol && type.symbol.exports) {
         const values: (string | number)[] = []
 
@@ -1347,20 +1368,93 @@ export class SchemaTransformer {
         })
 
         if (values.length > 0) {
-          schema.enum = values
-          const isString = values.every(v => typeof v === 'string')
-          const isNumber = values.every(v => typeof v === 'number')
+          this.applyEnumValues(values, schema)
+          return
+        }
+      }
 
-          if (isString) {
-            schema.type = 'string'
-          } else if (isNumber) {
-            schema.type = 'number'
-          } else {
-            schema.type = 'string'
-          }
+      // Handle literal object enums (e.g., const UserType = { ADMIN: 'admin', USER: 'user' })
+      const values = this.extractValuesFromObjectLiteral(type)
+      if (values.length > 0) {
+        this.applyEnumValues(values, schema)
+      }
+    }
+  }
+
+  private extractValuesFromArrayLiteral(
+    arrayLiteral: ts.ArrayLiteralExpression
+  ): (string | number)[] {
+    const values: (string | number)[] = []
+
+    for (const element of arrayLiteral.elements) {
+      if (ts.isStringLiteral(element)) {
+        values.push(element.text)
+      } else if (ts.isNumericLiteral(element)) {
+        values.push(Number(element.text))
+      } else if (
+        ts.isPrefixUnaryExpression(element) &&
+        element.operator === ts.SyntaxKind.MinusToken &&
+        ts.isNumericLiteral(element.operand)
+      ) {
+        values.push(-Number(element.operand.text))
+      }
+    }
+
+    return values
+  }
+
+  private extractValuesFromObjectLiteral(type: ts.Type): (string | number)[] {
+    const values: (string | number)[] = []
+
+    const properties = type.getProperties()
+    if (!properties || properties.length === 0) return values
+
+    for (const prop of properties) {
+      const propType = this.checker.getTypeOfSymbolAtLocation(
+        prop,
+        prop.valueDeclaration!
+      )
+
+      if (propType.isStringLiteral()) {
+        values.push(propType.value)
+      } else if (propType.isNumberLiteral()) {
+        values.push(propType.value)
+      } else if (
+        prop.valueDeclaration &&
+        ts.isPropertyAssignment(prop.valueDeclaration)
+      ) {
+        // Fallback: extract value from AST initializer (for non-"as const" objects)
+        const initializer = prop.valueDeclaration.initializer
+        if (ts.isStringLiteral(initializer)) {
+          values.push(initializer.text)
+        } else if (ts.isNumericLiteral(initializer)) {
+          values.push(Number(initializer.text))
         }
       }
     }
+
+    return values
+  }
+
+  private applyEnumValues(
+    values: (string | number)[],
+    schema: SchemaType
+  ): void {
+    schema.enum = values
+    const isString = values.every(v => typeof v === 'string')
+    const isNumber = values.every(v => typeof v === 'number')
+
+    if (isString) {
+      schema.type = 'string'
+    } else if (isNumber) {
+      schema.type = 'number'
+    } else {
+      schema.type = 'string'
+    }
+
+    // Clean up object-type leftovers when enum is applied
+    delete schema.properties
+    delete schema.additionalProperties
   }
 
   private applyDecorators(property: PropertyInfo, schema: SchemaType): void {
@@ -1469,7 +1563,11 @@ export class SchemaTransformer {
         case constants.validatorDecorators.IsEnum.name:
           if (!property.isArray) {
             this.applyEnumDecorator(decorator, schema)
-          } else if (schema.items) {
+          } else {
+            if (!schema.items) {
+              schema.type = 'array'
+              schema.items = {} as SchemaType
+            }
             this.applyEnumDecorator(decorator, schema.items)
           }
           break

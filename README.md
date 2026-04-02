@@ -27,7 +27,26 @@ class User {
 }
 
 const schema = transform(User)
-// Returns complete OpenAPI schema ready for Swagger/API documentation
+
+console.log(JSON.stringify(shema), null, 2)
+```
+
+**Generated output:**
+
+```json
+{
+  "name": "User",
+  "schema": {
+    "type": "object",
+    "properties": {
+      "id": { "type": "number" },
+      "name": { "type": "string" },
+      "email": { "type": "string" },
+      "age": { "type": "number" }
+    },
+    "required": ["id", "name", "email"]
+  }
+}
 ```
 
 ## 📦 Installation
@@ -55,57 +74,7 @@ npm install ts-class-to-openapi class-validator
 
 ## 🎨 Class Transformation Examples
 
-### 1. Basic TypeScript Class
-
-Fundamental method: transform any TypeScript class without decorators:
-
-```typescript
-import { transform } from 'ts-class-to-openapi'
-
-// Basic TypeScript class - no decorators required
-class User {
-  id: number
-  name: string
-  email: string
-  age: number
-  active: boolean
-  tags: string[]
-  createdAt: Date
-}
-
-// Transform class to OpenAPI schema
-const result = transform(User)
-console.log(JSON.stringify(result, null, 2))
-```
-
-**Generated output:**
-
-```json
-{
-  "name": "User",
-  "schema": {
-    "type": "object",
-    "properties": {
-      "id": { "type": "number" },
-      "name": { "type": "string" },
-      "email": { "type": "string" },
-      "age": { "type": "number" },
-      "active": { "type": "boolean" },
-      "tags": {
-        "type": "array",
-        "items": { "type": "string" }
-      },
-      "createdAt": {
-        "type": "string",
-        "format": "date-time"
-      }
-    },
-    "required": ["id", "name", "email", "age", "active", "tags", "createdAt"]
-  }
-}
-```
-
-### 2. Class with Advanced Validations
+### 1. Class with Advanced Validations
 
 For more detailed schemas, class-validator decorators can be incorporated:
 
@@ -156,7 +125,7 @@ const result = transform(User)
 }
 ```
 
-### 3. Nested Objects and Arrays
+### 2. Nested Objects and Arrays
 
 Automatic processing of complex relationships:
 
@@ -229,9 +198,9 @@ const schema = transform(User)
 }
 ```
 
-### 4. Enumerations and Special Types
+### 3. Enumerations and Special Types
 
-Full compatibility with TypeScript enumerations (both decorated and pure):
+Full compatibility with TypeScript enumerations (both decorated and pure), and literal object as enums:
 
 ```typescript
 import { transform } from 'ts-class-to-openapi'
@@ -295,59 +264,6 @@ const schema = transform(Task)
       }
     },
     "required": ["assignedTo", "status", "title", "completed", "dueDate"]
-  }
-}
-```
-
-### 5. File Upload
-
-Integrated support for binary file handling:
-
-```typescript
-import { transform } from 'ts-class-to-openapi'
-import { IsNotEmpty, IsOptional } from 'class-validator'
-
-// Custom file type definition
-class UploadFile {}
-
-class UserProfile {
-  @IsNotEmpty()
-  profilePicture: UploadFile
-
-  @IsOptional()
-  resume: UploadFile
-
-  documents: UploadFile[] // Multiple files
-}
-
-const schema = transform(UserProfile)
-```
-
-**Generated output:**
-
-```json
-{
-  "name": "UserProfile",
-  "schema": {
-    "type": "object",
-    "properties": {
-      "profilePicture": {
-        "type": "string",
-        "format": "binary"
-      },
-      "resume": {
-        "type": "string",
-        "format": "binary"
-      },
-      "documents": {
-        "type": "array",
-        "items": {
-          "type": "string",
-          "format": "binary"
-        }
-      }
-    },
-    "required": ["profilePicture", "documents"]
   }
 }
 ```

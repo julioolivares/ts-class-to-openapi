@@ -8,6 +8,11 @@ import {
   UserRole,
   OrderStatus,
   MixedEnum,
+  LiteralEnumTestEntity,
+  ArrayLiteralEnumTestEntity,
+  StringLiteralEnum,
+  NumericLiteralEnum,
+  MixedLiteralEnum,
 } from '../entities/enum-classes.js'
 
 describe('Enum Properties Transformation', () => {
@@ -80,5 +85,55 @@ describe('Enum Properties Transformation', () => {
     const mixedProp = schema.properties.mixed
     assert.strictEqual(mixedProp.type, 'string')
     assert.deepStrictEqual(mixedProp.enum, ['yes', 0])
+  })
+})
+
+describe('Literal Object Enum Properties Transformation', () => {
+  test('should transform string literal object enums correctly', () => {
+    const result = transform(LiteralEnumTestEntity)
+    const schema = result.schema
+
+    assert.strictEqual(schema.type, 'object')
+    assert.ok(schema.properties)
+
+    const roleProp = schema.properties.role
+    assert.strictEqual(roleProp.type, 'string')
+    assert.deepStrictEqual(roleProp.enum, ['admin', 'user', 'moderator'])
+  })
+
+  test('should transform numeric literal object enums correctly', () => {
+    const result = transform(LiteralEnumTestEntity)
+    const schema = result.schema
+
+    const priorityProp = schema.properties.priority
+    assert.strictEqual(priorityProp.type, 'number')
+    assert.deepStrictEqual(priorityProp.enum, [1, 2, 3])
+  })
+
+  test('should transform mixed literal object enums correctly', () => {
+    const result = transform(LiteralEnumTestEntity)
+    const schema = result.schema
+
+    const mixedProp = schema.properties.mixed
+    assert.strictEqual(mixedProp.type, 'string')
+    assert.deepStrictEqual(mixedProp.enum, ['yes', 0])
+    assert.strictEqual(schema.required?.includes('mixed'), false)
+  })
+
+  test('should transform array of literal object enums correctly', () => {
+    const result = transform(ArrayLiteralEnumTestEntity)
+    const schema = result.schema
+
+    assert.strictEqual(schema.type, 'object')
+
+    const rolesProp = schema.properties.roles
+    assert.strictEqual(rolesProp.type, 'array')
+    assert.strictEqual(rolesProp.items.type, 'string')
+    assert.deepStrictEqual(rolesProp.items.enum, ['admin', 'user', 'moderator'])
+
+    const prioritiesProp = schema.properties.priorities
+    assert.strictEqual(prioritiesProp.type, 'array')
+    assert.strictEqual(prioritiesProp.items.type, 'number')
+    assert.deepStrictEqual(prioritiesProp.items.enum, [1, 2, 3])
   })
 })
