@@ -1,12 +1,11 @@
 import { defineConfig } from 'tsdown'
 
 export default defineConfig({
+  entry: './src/index.ts',
   outDir: './dist',
   tsconfig: './tsconfig.json',
   format: ['cjs', 'esm'],
   dts: true,
-  inputOptions: {
-    resolve: { mainFields: ['module', 'main'] },
-  },
   failOnWarn: true,
+  clean: true,
 })

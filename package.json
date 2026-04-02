@@ -27,7 +27,7 @@
     "test": "node --import tsx --test test/testCases/**/*.test.ts",
     "test:watch": "node --import tsx --inspect --test --watch test/testCases/**/*.test.ts",
     "test:coverage": "node --import tsx --test --experimental-test-coverage test/testCases/**/*.test.ts",
-    "build": "tsc --noEmit && rm -rf dist && tsdown",
+    "build": "tsc --noEmit && tsdown",
     "build:watch": "rm -rf dist && tsdown --watch",
     "dev": "node --import tsx --inspect --watch ./src/run.ts",
     "format": "prettier --write .",
