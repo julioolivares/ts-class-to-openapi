@@ -20,12 +20,12 @@ class Task {
   // Pure TypeScript enum (automatically detected without decorator)
   status: number
 
-  /*  @IsEnum(Priority)
+  @IsEnum(Priority)
   priority?: Priority
 
   title: string
   completed: boolean
-  dueDate: Date */
+  dueDate: Date
 }
 
 const schema = transform(Task)

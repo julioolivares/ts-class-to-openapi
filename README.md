@@ -27,7 +27,26 @@ class User {
 }
 
 const schema = transform(User)
-// Returns complete OpenAPI schema ready for Swagger/API documentation
+
+console.log(JSON.stringify(shema), null, 2)
+```
+
+**Generated output:**
+
+```json
+{
+  "name": "User",
+  "schema": {
+    "type": "object",
+    "properties": {
+      "id": { "type": "number" },
+      "name": { "type": "string" },
+      "email": { "type": "string" },
+      "age": { "type": "number" }
+    },
+    "required": ["id", "name", "email"]
+  }
+}
 ```
 
 ## 📦 Installation
@@ -231,7 +250,7 @@ const schema = transform(User)
 
 ### 4. Enumerations and Special Types
 
-Full compatibility with TypeScript enumerations (both decorated and pure):
+Full compatibility with TypeScript enumerations (both decorated and pure), and literal object as enums:
 
 ```typescript
 import { transform } from 'ts-class-to-openapi'

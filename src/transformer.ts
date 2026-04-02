@@ -1331,6 +1331,17 @@ export class SchemaTransformer {
     const arg = decorator.arguments[0]
 
     if (arg && typeof arg === 'object' && 'kind' in arg) {
+      // Handle inline array literals (e.g., @IsEnum(['admin', 'user', 'moderator']))
+      if (ts.isArrayLiteralExpression(arg as ts.Node)) {
+        const values = this.extractValuesFromArrayLiteral(
+          arg as ts.ArrayLiteralExpression
+        )
+        if (values.length > 0) {
+          this.applyEnumValues(values, schema)
+        }
+        return
+      }
+
       const type = this.checker.getTypeAtLocation(arg as ts.Node)
 
       // Handle real TypeScript enums (type.symbol.exports contains EnumMembers)
@@ -1359,6 +1370,28 @@ export class SchemaTransformer {
         this.applyEnumValues(values, schema)
       }
     }
+  }
+
+  private extractValuesFromArrayLiteral(
+    arrayLiteral: ts.ArrayLiteralExpression
+  ): (string | number)[] {
+    const values: (string | number)[] = []
+
+    for (const element of arrayLiteral.elements) {
+      if (ts.isStringLiteral(element)) {
+        values.push(element.text)
+      } else if (ts.isNumericLiteral(element)) {
+        values.push(Number(element.text))
+      } else if (
+        ts.isPrefixUnaryExpression(element) &&
+        element.operator === ts.SyntaxKind.MinusToken &&
+        ts.isNumericLiteral(element.operand)
+      ) {
+        values.push(-Number(element.operand.text))
+      }
+    }
+
+    return values
   }
 
   private extractValuesFromObjectLiteral(type: ts.Type): (string | number)[] {
