@@ -178,6 +178,17 @@ export class SchemaTransformer {
         const isArray = this.isArrayProperty(member)
         const isTypeLiteral = this.isTypeLiteral(member)
 
+        let genericClassReference: ts.ClassDeclaration | undefined = undefined
+        if (isGeneric && !isPrimitive) {
+          const baseTypeName = type.replace(/\[\]$/, '').trim()
+          if (!this.isPrimitiveType(baseTypeName)) {
+            const matches = this.classFileIndex.get(baseTypeName)
+            if (matches && matches.length > 0 && matches[0]) {
+              genericClassReference = matches[0].node
+            }
+          }
+        }
+
         const property: PropertyInfo = {
           name: propertyName,
           type,
@@ -191,6 +202,7 @@ export class SchemaTransformer {
           isEnum,
           isRef: false,
           isTypeLiteral: isTypeLiteral,
+          genericClassReference,
         }
 
         // Check for self-referencing properties to mark as $ref
@@ -488,7 +500,11 @@ export class SchemaTransformer {
 
     // Check if it's a type reference with type arguments
     // But exclude simple arrays which internally use Array<T> representation
-    if ((type as any).typeArguments && (type as any).typeArguments.length > 0) {
+    if (
+      (type as any).typeArguments &&
+      (type as any).typeArguments.length > 0 &&
+      (type as any).typeArguments[0].symbol.getName() === 'Array'
+    ) {
       const symbol = type.getSymbol()
       if (symbol && symbol.getName() === 'Array') {
         // This is Array<T> - only consider it generic if T itself is a utility type
@@ -593,6 +609,14 @@ export class SchemaTransformer {
       if (
         (elementType as any).typeArguments &&
         (elementType as any).typeArguments.length > 0
+      ) {
+        return false
+      }
+
+      if (
+        (type as any).typeArguments &&
+        (type as any).typeArguments[0].symbol &&
+        (type as any).typeArguments[0].symbol.getName() !== 'Array'
       ) {
         return false
       }
@@ -1052,6 +1076,17 @@ export class SchemaTransformer {
         visitedClass,
         transformedSchema,
       })
+    } else if (property.isGeneric) {
+      if (property.genericClassReference) {
+        schema = this.getSchemaFromClass({
+          isArray: property.isArray as boolean,
+          visitedClass,
+          transformedSchema,
+          declaration: property.genericClassReference,
+        })
+      } else {
+        schema = { type: 'object', properties: {}, additionalProperties: true }
+      }
     } else {
       schema = { type: 'object', properties: {}, additionalProperties: true }
     }
@@ -1575,6 +1610,127 @@ export class SchemaTransformer {
     }
   }
 
+  /**
+   * Resolves the caller's source location by reading the already-source-mapped
+   * error stack string. Avoids overriding Error.prepareStackTrace so that
+   * loaders like tsx can keep their source-map processing intact.
+   */
+  private getCallerSourceLocation():
+    | { fileName: string; line: number; character: number }
+    | undefined {
+    const err = new Error()
+    const stack = err.stack
+    if (!stack) return undefined
+
+    // Each relevant frame looks like:
+    //   at Something (file:///C:/path/to/file.ts:7:14)
+    //   at Object.<anonymous> (/abs/path/file.ts:7:14)
+    const frameRe = /^\s+at .+?\s+\((.+?):(\d+):(\d+)\)\s*$/
+    for (const line of stack.split('\n')) {
+      const m = frameRe.exec(line)
+      if (!m) continue
+      const fileName = m[1]!
+      if (
+        fileName.includes('node:') ||
+        fileName.includes('/node_modules/') ||
+        fileName.includes('\\node_modules\\') ||
+        fileName.includes('transformer') ||
+        fileName.includes('index.ts') ||
+        fileName.includes('index.js') ||
+        fileName.includes('index.mjs') ||
+        fileName.includes('index.cjs')
+      )
+        continue
+
+      return {
+        fileName,
+        line: Number(m[2]),
+        character: Number(m[3]),
+      }
+    }
+
+    return undefined
+  }
+
+  private findSourceFileByPath(filePath: string): ts.SourceFile | undefined {
+    const normalize = (p: string) => p.replace(/\\/g, '/').toLowerCase()
+    const normalized = normalize(filePath)
+    return this.program.getSourceFiles().find(sf => {
+      const sfNorm = normalize(sf.fileName)
+      return (
+        sfNorm === normalized ||
+        sfNorm.endsWith(normalized) ||
+        normalized.endsWith(sfNorm)
+      )
+    })
+  }
+
+  /**
+   * Inspects the TypeScript AST at the caller's source location to extract
+   * type arguments from an instantiation expression like `Foo<Bar>`.
+   * This allows resolving generics without passing explicit runtime args.
+   */
+  private resolveGenericTypeMapFromCallsite(
+    classNode: ts.ClassDeclaration
+  ): Map<string, string> {
+    const genericTypeMap = new Map<string, string>()
+    if (!classNode.typeParameters || classNode.typeParameters.length === 0) {
+      return genericTypeMap
+    }
+
+    const location = this.getCallerSourceLocation()
+    if (!location) return genericTypeMap
+
+    try {
+      const sourceFile = this.findSourceFileByPath(location.fileName)
+      if (!sourceFile) return genericTypeMap
+
+      const targetLine = location.line - 1 // 0-indexed for TS API
+
+      // Collect all CallExpression nodes on the caller's line
+      const callsOnLine: ts.CallExpression[] = []
+      const visit = (node: ts.Node) => {
+        if (ts.isCallExpression(node)) {
+          const { line } = ts.getLineAndCharacterOfPosition(
+            sourceFile,
+            node.getStart(sourceFile)
+          )
+          if (line === targetLine) callsOnLine.push(node)
+        }
+        ts.forEachChild(node, visit)
+      }
+      visit(sourceFile)
+
+      for (const call of callsOnLine) {
+        const firstArg = call.arguments[0]
+        if (!firstArg) continue
+
+        // TypeScript 4.7+ instantiation expression `Foo<Bar>` stores type
+        // arguments on the argument node itself, accessible via `typeArguments`.
+        const typeArgs: ts.NodeArray<ts.TypeNode> | undefined = (
+          firstArg as any
+        ).typeArguments
+        if (!typeArgs || typeArgs.length === 0) continue
+
+        classNode.typeParameters!.forEach((param, i) => {
+          const typeArg = typeArgs[i]
+          if (typeArg) {
+            genericTypeMap.set(
+              param.name.text,
+              this.getTypeNodeToString(typeArg, new Map())
+            )
+          }
+        })
+
+        if (genericTypeMap.size > 0) break
+      }
+    } catch {
+      // Best-effort — if callsite resolution fails, fall back to unresolved generics
+    }
+
+    return genericTypeMap
+  }
+
   public transform(
     cls: Function,
     sourceOptions?: {
@@ -1583,12 +1739,6 @@ export class SchemaTransformer {
       filePath?: string
     }
   ): { name: string; schema: SchemaType } {
-    if (this.classCache.has(cls)) {
-      return this.classCache.get(cls)!
-    }
-
-    let schema: SchemaType = { type: 'object', properties: {} }
-
     const result = this.getSourceFileByClass(cls, sourceOptions)
 
     if (!result || !result?.sourceFile) {
@@ -1604,12 +1754,33 @@ export class SchemaTransformer {
       }
     }
 
-    const properties = this.getPropertiesByClassDeclaration(result.node)
+    // Resolve generic type arguments from the TypeScript AST at the callsite.
+    // This works because the library has a ts.Program loaded and can inspect
+    // the source of whoever called transform() — including type arguments that
+    // TypeScript erases at runtime (e.g. transform(Foo<Bar>) → transform(Foo)).
+    const genericTypeMap = this.resolveGenericTypeMapFromCallsite(result.node)
+    const hasGenericArgs = genericTypeMap.size > 0
+
+    if (!hasGenericArgs && this.classCache.has(cls)) {
+      return this.classCache.get(cls)!
+    }
+
+    let schema: SchemaType = { type: 'object', properties: {} }
+
+    const properties = this.getPropertiesByClassDeclaration(
+      result.node,
+      undefined,
+      genericTypeMap
+    )
 
     schema = this.getSchemaFromProperties({
       properties,
       classDeclaration: result.node,
     }) as SchemaType
+
+    if (!hasGenericArgs) {
+      this.classCache.set(cls, { name: cls.name, schema })
+    }
 
     return { name: cls.name, schema }
   }
