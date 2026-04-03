@@ -1,33 +1,29 @@
 import { transform } from './index.js'
-import { IsEnum } from 'class-validator'
 
-const UserType = {
-  ADMIN: 'admin',
-  USER: 'user',
-  MODERATOR: 'moderator',
+class BasePaginatedResponse<Entity> {
+  cursor: string
+
+  rows: Entity[]
+
+  next: boolean
+
+  prev: boolean
 }
 
-enum Priority {
-  LOW = 1,
-  MEDIUM = 2,
-  HIGH = 3,
+class User {
+  id: number
+
+  name: string
+
+  email: string
+
+  password: string
+
+  createdAt: Date
+
+  updatedAt: Date
 }
 
-class Task {
-  @IsEnum(UserType)
-  assignedTo: (typeof UserType)[keyof typeof UserType]
-
-  // Pure TypeScript enum (automatically detected without decorator)
-  status: number
-
-  @IsEnum(Priority)
-  priority?: Priority
-
-  title: string
-  completed: boolean
-  dueDate: Date
-}
-
-const schema = transform(Task)
+const schema = transform(BasePaginatedResponse<User>)
 
 console.log(JSON.stringify(schema, null, 2))
