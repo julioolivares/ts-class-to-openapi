@@ -26,6 +26,8 @@ export class SchemaTransformer {
     { sourceFile: ts.SourceFile; node: ts.ClassDeclaration }[]
   >()
 
+  private transformCallIndex = new Map<string, Map<string, string>>()
+
   private constructor(
     tsConfigPath: string = constants.TS_CONFIG_DEFAULT_PATH,
     options: TransformerOptions = {}
@@ -54,16 +56,7 @@ export class SchemaTransformer {
     this.program = ts.createProgram(fileNames, tsOptions)
     this.checker = this.program.getTypeChecker()
 
-    this.program.getSourceFiles().forEach(sf => {
-      sf.statements.forEach(stmt => {
-        if (ts.isClassDeclaration(stmt) && stmt.name) {
-          const name = stmt.name.text
-          const entry = this.classFileIndex.get(name) || []
-          entry.push({ sourceFile: sf, node: stmt })
-          this.classFileIndex.set(name, entry)
-        }
-      })
-    })
+    this.buildTransformCallIndex()
   }
 
   private getPropertiesByClassDeclaration(
@@ -178,6 +171,17 @@ export class SchemaTransformer {
         const isArray = this.isArrayProperty(member)
         const isTypeLiteral = this.isTypeLiteral(member)
 
+        let genericClassReference: ts.ClassDeclaration | undefined = undefined
+        if (isGeneric && !isPrimitive) {
+          const baseTypeName = type.replace(/\[\]$/, '').trim()
+          if (!this.isPrimitiveType(baseTypeName)) {
+            const matches = this.classFileIndex.get(baseTypeName)
+            if (matches && matches.length > 0 && matches[0]) {
+              genericClassReference = matches[0].node
+            }
+          }
+        }
+
         const property: PropertyInfo = {
           name: propertyName,
           type,
@@ -191,6 +195,7 @@ export class SchemaTransformer {
           isEnum,
           isRef: false,
           isTypeLiteral: isTypeLiteral,
+          genericClassReference,
         }
 
         // Check for self-referencing properties to mark as $ref
@@ -287,6 +292,16 @@ export class SchemaTransformer {
       }
 
       if (typeNode.typeArguments && typeNode.typeArguments.length > 0) {
+        // Array<T> — resolve the inner type through genericTypeMap instead of
+        // calling the type-checker, which can't see through the generic param.
+        if (typeName === 'Array') {
+          const innerType = this.getTypeNodeToString(
+            typeNode.typeArguments[0]!,
+            genericTypeMap
+          )
+          return `${innerType}[]`
+        }
+
         const firstTypeArg = typeNode.typeArguments[0]
         if (
           firstTypeArg &&
@@ -488,7 +503,11 @@ export class SchemaTransformer {
 
     // Check if it's a type reference with type arguments
     // But exclude simple arrays which internally use Array<T> representation
-    if ((type as any).typeArguments && (type as any).typeArguments.length > 0) {
+    if (
+      (type as any).typeArguments &&
+      (type as any).typeArguments.length > 0 &&
+      (type as any).typeArguments[0].symbol.getName() === 'Array'
+    ) {
       const symbol = type.getSymbol()
       if (symbol && symbol.getName() === 'Array') {
         // This is Array<T> - only consider it generic if T itself is a utility type
@@ -593,6 +612,14 @@ export class SchemaTransformer {
       if (
         (elementType as any).typeArguments &&
         (elementType as any).typeArguments.length > 0
+      ) {
+        return false
+      }
+
+      if (
+        (type as any).typeArguments &&
+        (type as any).typeArguments[0].symbol &&
+        (type as any).typeArguments[0].symbol.getName() !== 'Array'
       ) {
         return false
       }
@@ -704,44 +731,6 @@ export class SchemaTransformer {
     return matches[0]
   }
 
-  private checkTypeMatch(value: any, typeNode: ts.TypeNode): boolean {
-    const runtimeType = typeof value
-
-    if (
-      runtimeType === 'string' &&
-      typeNode.kind === ts.SyntaxKind.StringKeyword
-    )
-      return true
-    if (
-      runtimeType === 'number' &&
-      typeNode.kind === ts.SyntaxKind.NumberKeyword
-    )
-      return true
-    if (
-      runtimeType === 'boolean' &&
-      typeNode.kind === ts.SyntaxKind.BooleanKeyword
-    )
-      return true
-
-    if (Array.isArray(value) && ts.isArrayTypeNode(typeNode)) {
-      if (value.length === 0) return true
-      const firstItem = value[0]
-      const elementType = typeNode.elementType
-      return this.checkTypeMatch(firstItem, elementType)
-    }
-
-    if (runtimeType === 'object' && value !== null && !Array.isArray(value)) {
-      if (
-        ts.isTypeReferenceNode(typeNode) ||
-        typeNode.kind === ts.SyntaxKind.ObjectKeyword
-      ) {
-        return true
-      }
-    }
-
-    return false
-  }
-
   private findBestMatch(
     cls: Function,
     matches: { sourceFile: ts.SourceFile; node: ts.ClassDeclaration }[]
@@ -833,8 +822,18 @@ export class SchemaTransformer {
 
     // Check if the original property type is an array type
     if (this.isArrayProperty(propertyDeclaration)) {
-      const arrayType = propertyDeclaration.type as ts.ArrayTypeNode
-      const elementType = arrayType.elementType
+      // Resolve the element type node for both T[] and Array<T> syntax
+      let elementType: ts.TypeNode | undefined
+      if (ts.isArrayTypeNode(propertyDeclaration.type)) {
+        elementType = propertyDeclaration.type.elementType
+      } else if (
+        ts.isTypeReferenceNode(propertyDeclaration.type) &&
+        propertyDeclaration.type.typeArguments?.[0]
+      ) {
+        elementType = propertyDeclaration.type.typeArguments[0]
+      }
+
+      if (!elementType) return false
 
       // Special handling for utility types with type arguments (e.g., PayloadEntity<Person>)
       if (
@@ -984,7 +983,20 @@ export class SchemaTransformer {
       return false
     }
 
-    return ts.isArrayTypeNode(propertyDeclaration.type)
+    if (ts.isArrayTypeNode(propertyDeclaration.type)) {
+      return true
+    }
+
+    // Also handle Array<T> generic syntax
+    if (
+      ts.isTypeReferenceNode(propertyDeclaration.type) &&
+      ts.isIdentifier(propertyDeclaration.type.typeName) &&
+      propertyDeclaration.type.typeName.text === 'Array'
+    ) {
+      return true
+    }
+
+    return false
   }
 
   private getSchemaFromProperties({
@@ -1052,6 +1064,17 @@ export class SchemaTransformer {
         visitedClass,
         transformedSchema,
       })
+    } else if (property.isGeneric) {
+      if (property.genericClassReference) {
+        schema = this.getSchemaFromClass({
+          isArray: property.isArray as boolean,
+          visitedClass,
+          transformedSchema,
+          declaration: property.genericClassReference,
+        })
+      } else {
+        schema = { type: 'object', properties: {}, additionalProperties: true }
+      }
     } else {
       schema = { type: 'object', properties: {}, additionalProperties: true }
     }
@@ -1575,6 +1598,73 @@ export class SchemaTransformer {
     }
   }
 
+  /**
+   * Scans all non-declaration source files in the program once and records
+   * every call of the form `transform(Foo<Bar, Baz>)`, keyed by class name.
+   * This means generic resolution in transform() is a pure O(1) Map lookup
+   * with no runtime stack inspection.
+   */
+  private buildTransformCallIndex(): void {
+    this.program.getSourceFiles().forEach(sf => {
+      if (sf.isDeclarationFile) return
+
+      // Build classFileIndex and transformCallIndex in a single pass
+      sf.statements.forEach(stmt => {
+        if (ts.isClassDeclaration(stmt) && stmt.name) {
+          const name = stmt.name.text
+          const entry = this.classFileIndex.get(name) || []
+          entry.push({ sourceFile: sf, node: stmt })
+          this.classFileIndex.set(name, entry)
+        }
+      })
+
+      const visit = (node: ts.Node): void => {
+        if (ts.isCallExpression(node) && node.arguments.length > 0) {
+          const callee = node.expression
+          const isTransformCall =
+            (ts.isIdentifier(callee) && callee.text === 'transform') ||
+            (ts.isPropertyAccessExpression(callee) &&
+              callee.name.text === 'transform')
+
+          if (isTransformCall) {
+            const firstArg = node.arguments[0]!
+            // Instantiation expression Foo<Bar>: typeArguments live on the node
+            // and .expression holds the base class identifier.
+            const typeArgs: ts.NodeArray<ts.TypeNode> | undefined = (
+              firstArg as any
+            ).typeArguments
+
+            if (typeArgs && typeArgs.length > 0) {
+              const baseExpr: ts.Node = (firstArg as any).expression ?? firstArg
+              if (ts.isIdentifier(baseExpr)) {
+                const classNode = this.classFileIndex.get(baseExpr.text)?.[0]
+                  ?.node
+                if (classNode?.typeParameters) {
+                  const typeMap = new Map<string, string>()
+                  classNode.typeParameters.forEach((param, i) => {
+                    const typeArg = typeArgs[i]
+                    if (typeArg) {
+                      typeMap.set(
+                        param.name.text,
+                        this.getTypeNodeToString(typeArg, new Map())
+                      )
+                    }
+                  })
+                  if (typeMap.size > 0) {
+                    // Key by class name — no stack trace needed at call time.
+                    this.transformCallIndex.set(baseExpr.text, typeMap)
+                  }
+                }
+              }
+            }
+          }
+        }
+        ts.forEachChild(node, visit)
+      }
+      visit(sf)
+    })
+  }
+
   public transform(
     cls: Function,
     sourceOptions?: {
@@ -1583,12 +1673,6 @@ export class SchemaTransformer {
       filePath?: string
     }
   ): { name: string; schema: SchemaType } {
-    if (this.classCache.has(cls)) {
-      return this.classCache.get(cls)!
-    }
-
-    let schema: SchemaType = { type: 'object', properties: {} }
-
     const result = this.getSourceFileByClass(cls, sourceOptions)
 
     if (!result || !result?.sourceFile) {
@@ -1604,12 +1688,34 @@ export class SchemaTransformer {
       }
     }
 
-    const properties = this.getPropertiesByClassDeclaration(result.node)
+    // Look up the pre-computed generic type map by class name.
+    // buildTransformCallIndex() already scanned all transform(Foo<Bar>) calls
+    // in the program at construction time, so this is a plain O(1) Map lookup
+    // with zero runtime stack inspection.
+    const genericTypeMap =
+      this.transformCallIndex.get(cls.name) ?? new Map<string, string>()
+    const hasGenericArgs = genericTypeMap.size > 0
+
+    if (!hasGenericArgs && this.classCache.has(cls)) {
+      return this.classCache.get(cls)!
+    }
+
+    let schema: SchemaType = { type: 'object', properties: {} }
+
+    const properties = this.getPropertiesByClassDeclaration(
+      result.node,
+      undefined,
+      genericTypeMap
+    )
 
     schema = this.getSchemaFromProperties({
       properties,
       classDeclaration: result.node,
     }) as SchemaType
+
+    if (!hasGenericArgs) {
+      this.classCache.set(cls, { name: cls.name, schema })
+    }
 
     return { name: cls.name, schema }
   }

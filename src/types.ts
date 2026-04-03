@@ -60,6 +60,9 @@ interface PropertyInfo {
 
   /** The class declaration reference when the property is a type literal with a class argument */
   typeLiteralClassReference?: ts.ClassDeclaration
+
+  /** The class declaration reference when the property is a resolved generic type pointing to a class */
+  genericClassReference?: ts.ClassDeclaration | undefined
 }
 
 /**
