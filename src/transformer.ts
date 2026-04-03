@@ -26,6 +26,8 @@ export class SchemaTransformer {
     { sourceFile: ts.SourceFile; node: ts.ClassDeclaration }[]
   >()
 
+  private transformCallIndex = new Map<string, Map<string, string>>()
+
   private constructor(
     tsConfigPath: string = constants.TS_CONFIG_DEFAULT_PATH,
     options: TransformerOptions = {}
@@ -54,16 +56,7 @@ export class SchemaTransformer {
     this.program = ts.createProgram(fileNames, tsOptions)
     this.checker = this.program.getTypeChecker()
 
-    this.program.getSourceFiles().forEach(sf => {
-      sf.statements.forEach(stmt => {
-        if (ts.isClassDeclaration(stmt) && stmt.name) {
-          const name = stmt.name.text
-          const entry = this.classFileIndex.get(name) || []
-          entry.push({ sourceFile: sf, node: stmt })
-          this.classFileIndex.set(name, entry)
-        }
-      })
-    })
+    this.buildTransformCallIndex()
   }
 
   private getPropertiesByClassDeclaration(
@@ -726,44 +719,6 @@ export class SchemaTransformer {
     }
 
     return matches[0]
-  }
-
-  private checkTypeMatch(value: any, typeNode: ts.TypeNode): boolean {
-    const runtimeType = typeof value
-
-    if (
-      runtimeType === 'string' &&
-      typeNode.kind === ts.SyntaxKind.StringKeyword
-    )
-      return true
-    if (
-      runtimeType === 'number' &&
-      typeNode.kind === ts.SyntaxKind.NumberKeyword
-    )
-      return true
-    if (
-      runtimeType === 'boolean' &&
-      typeNode.kind === ts.SyntaxKind.BooleanKeyword
-    )
-      return true
-
-    if (Array.isArray(value) && ts.isArrayTypeNode(typeNode)) {
-      if (value.length === 0) return true
-      const firstItem = value[0]
-      const elementType = typeNode.elementType
-      return this.checkTypeMatch(firstItem, elementType)
-    }
-
-    if (runtimeType === 'object' && value !== null && !Array.isArray(value)) {
-      if (
-        ts.isTypeReferenceNode(typeNode) ||
-        typeNode.kind === ts.SyntaxKind.ObjectKeyword
-      ) {
-        return true
-      }
-    }
-
-    return false
   }
 
   private findBestMatch(
@@ -1611,124 +1566,70 @@ export class SchemaTransformer {
   }
 
   /**
-   * Resolves the caller's source location by reading the already-source-mapped
-   * error stack string. Avoids overriding Error.prepareStackTrace so that
-   * loaders like tsx can keep their source-map processing intact.
+   * Scans all non-declaration source files in the program once and records
+   * every call of the form `transform(Foo<Bar, Baz>)`, keyed by class name.
+   * This means generic resolution in transform() is a pure O(1) Map lookup
+   * with no runtime stack inspection.
    */
-  private getCallerSourceLocation():
-    | { fileName: string; line: number; character: number }
-    | undefined {
-    const err = new Error()
-    const stack = err.stack
-    if (!stack) return undefined
+  private buildTransformCallIndex(): void {
+    this.program.getSourceFiles().forEach(sf => {
+      if (sf.isDeclarationFile) return
 
-    // Each relevant frame looks like:
-    //   at Something (file:///C:/path/to/file.ts:7:14)
-    //   at Object.<anonymous> (/abs/path/file.ts:7:14)
-    const frameRe = /^\s+at .+?\s+\((.+?):(\d+):(\d+)\)\s*$/
-    for (const line of stack.split('\n')) {
-      const m = frameRe.exec(line)
-      if (!m) continue
-      const fileName = m[1]!
-      if (
-        fileName.includes('node:') ||
-        fileName.includes('/node_modules/') ||
-        fileName.includes('\\node_modules\\') ||
-        fileName.includes('transformer') ||
-        fileName.includes('index.ts') ||
-        fileName.includes('index.js') ||
-        fileName.includes('index.mjs') ||
-        fileName.includes('index.cjs')
-      )
-        continue
+      // Build classFileIndex and transformCallIndex in a single pass
+      sf.statements.forEach(stmt => {
+        if (ts.isClassDeclaration(stmt) && stmt.name) {
+          const name = stmt.name.text
+          const entry = this.classFileIndex.get(name) || []
+          entry.push({ sourceFile: sf, node: stmt })
+          this.classFileIndex.set(name, entry)
+        }
+      })
 
-      return {
-        fileName,
-        line: Number(m[2]),
-        character: Number(m[3]),
-      }
-    }
+      const visit = (node: ts.Node): void => {
+        if (ts.isCallExpression(node) && node.arguments.length > 0) {
+          const callee = node.expression
+          const isTransformCall =
+            (ts.isIdentifier(callee) && callee.text === 'transform') ||
+            (ts.isPropertyAccessExpression(callee) &&
+              callee.name.text === 'transform')
 
-    return undefined
-  }
+          if (isTransformCall) {
+            const firstArg = node.arguments[0]!
+            // Instantiation expression Foo<Bar>: typeArguments live on the node
+            // and .expression holds the base class identifier.
+            const typeArgs: ts.NodeArray<ts.TypeNode> | undefined = (
+              firstArg as any
+            ).typeArguments
 
-  private findSourceFileByPath(filePath: string): ts.SourceFile | undefined {
-    const normalize = (p: string) => p.replace(/\\/g, '/').toLowerCase()
-    const normalized = normalize(filePath)
-    return this.program.getSourceFiles().find(sf => {
-      const sfNorm = normalize(sf.fileName)
-      return (
-        sfNorm === normalized ||
-        sfNorm.endsWith(normalized) ||
-        normalized.endsWith(sfNorm)
-      )
-    })
-  }
-
-  /**
-   * Inspects the TypeScript AST at the caller's source location to extract
-   * type arguments from an instantiation expression like `Foo<Bar>`.
-   * This allows resolving generics without passing explicit runtime args.
-   */
-  private resolveGenericTypeMapFromCallsite(
-    classNode: ts.ClassDeclaration
-  ): Map<string, string> {
-    const genericTypeMap = new Map<string, string>()
-    if (!classNode.typeParameters || classNode.typeParameters.length === 0) {
-      return genericTypeMap
-    }
-
-    const location = this.getCallerSourceLocation()
-    if (!location) return genericTypeMap
-
-    try {
-      const sourceFile = this.findSourceFileByPath(location.fileName)
-      if (!sourceFile) return genericTypeMap
-
-      const targetLine = location.line - 1 // 0-indexed for TS API
-
-      // Collect all CallExpression nodes on the caller's line
-      const callsOnLine: ts.CallExpression[] = []
-      const visit = (node: ts.Node) => {
-        if (ts.isCallExpression(node)) {
-          const { line } = ts.getLineAndCharacterOfPosition(
-            sourceFile,
-            node.getStart(sourceFile)
-          )
-          if (line === targetLine) callsOnLine.push(node)
+            if (typeArgs && typeArgs.length > 0) {
+              const baseExpr: ts.Node = (firstArg as any).expression ?? firstArg
+              if (ts.isIdentifier(baseExpr)) {
+                const classNode = this.classFileIndex.get(baseExpr.text)?.[0]
+                  ?.node
+                if (classNode?.typeParameters) {
+                  const typeMap = new Map<string, string>()
+                  classNode.typeParameters.forEach((param, i) => {
+                    const typeArg = typeArgs[i]
+                    if (typeArg) {
+                      typeMap.set(
+                        param.name.text,
+                        this.getTypeNodeToString(typeArg, new Map())
+                      )
+                    }
+                  })
+                  if (typeMap.size > 0) {
+                    // Key by class name — no stack trace needed at call time.
+                    this.transformCallIndex.set(baseExpr.text, typeMap)
+                  }
+                }
+              }
+            }
+          }
         }
         ts.forEachChild(node, visit)
       }
-      visit(sourceFile)
-
-      for (const call of callsOnLine) {
-        const firstArg = call.arguments[0]
-        if (!firstArg) continue
-
-        // TypeScript 4.7+ instantiation expression `Foo<Bar>` stores type
-        // arguments on the argument node itself, accessible via `typeArguments`.
-        const typeArgs: ts.NodeArray<ts.TypeNode> | undefined = (
-          firstArg as any
-        ).typeArguments
-        if (!typeArgs || typeArgs.length === 0) continue
-
-        classNode.typeParameters!.forEach((param, i) => {
-          const typeArg = typeArgs[i]
-          if (typeArg) {
-            genericTypeMap.set(
-              param.name.text,
-              this.getTypeNodeToString(typeArg, new Map())
-            )
-          }
-        })
-
-        if (genericTypeMap.size > 0) break
-      }
-    } catch {
-      // Best-effort — if callsite resolution fails, fall back to unresolved generics
-    }
-
-    return genericTypeMap
+      visit(sf)
+    })
   }
 
   public transform(
@@ -1754,11 +1655,12 @@ export class SchemaTransformer {
       }
     }
 
-    // Resolve generic type arguments from the TypeScript AST at the callsite.
-    // This works because the library has a ts.Program loaded and can inspect
-    // the source of whoever called transform() — including type arguments that
-    // TypeScript erases at runtime (e.g. transform(Foo<Bar>) → transform(Foo)).
-    const genericTypeMap = this.resolveGenericTypeMapFromCallsite(result.node)
+    // Look up the pre-computed generic type map by class name.
+    // buildTransformCallIndex() already scanned all transform(Foo<Bar>) calls
+    // in the program at construction time, so this is a plain O(1) Map lookup
+    // with zero runtime stack inspection.
+    const genericTypeMap =
+      this.transformCallIndex.get(cls.name) ?? new Map<string, string>()
     const hasGenericArgs = genericTypeMap.size > 0
 
     if (!hasGenericArgs && this.classCache.has(cls)) {

@@ -21,3 +21,5 @@ export class UserReference {
 
   updatedAt: Date
 }
+
+export class UserPaginatedResponse extends BasePaginatedResponse<UserReference> {}
