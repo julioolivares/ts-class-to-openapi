@@ -292,6 +292,16 @@ export class SchemaTransformer {
       }
 
       if (typeNode.typeArguments && typeNode.typeArguments.length > 0) {
+        // Array<T> — resolve the inner type through genericTypeMap instead of
+        // calling the type-checker, which can't see through the generic param.
+        if (typeName === 'Array') {
+          const innerType = this.getTypeNodeToString(
+            typeNode.typeArguments[0]!,
+            genericTypeMap
+          )
+          return `${innerType}[]`
+        }
+
         const firstTypeArg = typeNode.typeArguments[0]
         if (
           firstTypeArg &&
@@ -812,8 +822,18 @@ export class SchemaTransformer {
 
     // Check if the original property type is an array type
     if (this.isArrayProperty(propertyDeclaration)) {
-      const arrayType = propertyDeclaration.type as ts.ArrayTypeNode
-      const elementType = arrayType.elementType
+      // Resolve the element type node for both T[] and Array<T> syntax
+      let elementType: ts.TypeNode | undefined
+      if (ts.isArrayTypeNode(propertyDeclaration.type)) {
+        elementType = propertyDeclaration.type.elementType
+      } else if (
+        ts.isTypeReferenceNode(propertyDeclaration.type) &&
+        propertyDeclaration.type.typeArguments?.[0]
+      ) {
+        elementType = propertyDeclaration.type.typeArguments[0]
+      }
+
+      if (!elementType) return false
 
       // Special handling for utility types with type arguments (e.g., PayloadEntity<Person>)
       if (
@@ -963,7 +983,20 @@ export class SchemaTransformer {
       return false
     }
 
-    return ts.isArrayTypeNode(propertyDeclaration.type)
+    if (ts.isArrayTypeNode(propertyDeclaration.type)) {
+      return true
+    }
+
+    // Also handle Array<T> generic syntax
+    if (
+      ts.isTypeReferenceNode(propertyDeclaration.type) &&
+      ts.isIdentifier(propertyDeclaration.type.typeName) &&
+      propertyDeclaration.type.typeName.text === 'Array'
+    ) {
+      return true
+    }
+
+    return false
   }
 
   private getSchemaFromProperties({

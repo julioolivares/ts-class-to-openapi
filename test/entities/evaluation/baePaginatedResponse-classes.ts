@@ -20,6 +20,8 @@ export class UserReference {
   createdAt: Date
 
   updatedAt: Date
+
+  roles: Array<string>
 }
 
 export class UserPaginatedResponse extends BasePaginatedResponse<UserReference> {}
