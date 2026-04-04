@@ -264,7 +264,7 @@ export class SchemaTransformer {
     }
 
     const type = this.checker.getTypeAtLocation(property)
-    return this.getStringFromType(type)
+    return this.checker.typeToString(type)
   }
 
   private getTypeNodeToString(
@@ -391,21 +391,18 @@ export class SchemaTransformer {
     }
 
     const type = this.checker.getTypeAtLocation(typeNode)
-    const resolvedType = this.getStringFromType(type)
 
-    if (
-      resolvedType &&
-      resolvedType !== typeName &&
-      !resolvedType.includes('any')
-    ) {
-      return resolvedType
+    // Only use the checker's resolved type if it is concrete (not 'any').
+    // Using type flags instead of string matching avoids false rejections
+    // for types whose names contain the substring 'any' (e.g. Company).
+    if (!(type.flags & ts.TypeFlags.Any)) {
+      const resolvedType = this.checker.typeToString(type)
+      if (resolvedType && resolvedType !== typeName) {
+        return resolvedType
+      }
     }
 
     return typeName
-  }
-
-  private getStringFromType(type: ts.Type) {
-    return this.checker.typeToString(type)
   }
 
   private extractDecorators(member: ts.PropertyDeclaration): DecoratorInfo[] {
@@ -646,7 +643,6 @@ export class SchemaTransformer {
   private isPrimitiveType(typeName: string): boolean {
     const lowerTypeName = typeName.toLowerCase()
 
-    // Check against all primitive types from constants
     const primitiveTypes = [
       constants.jsPrimitives.String.type.toLowerCase(),
       constants.jsPrimitives.Number.type.toLowerCase(),
@@ -748,32 +744,74 @@ export class SchemaTransformer {
     cls: Function,
     matches: { sourceFile: ts.SourceFile; node: ts.ClassDeclaration }[]
   ): { sourceFile: ts.SourceFile; node: ts.ClassDeclaration } | undefined {
-    let instance: any = {}
+    // Extract property names from the runtime class without instantiation
+    // to avoid executing potentially unsafe constructors with side effects
+    const runtimeProps = this.extractRuntimePropertyNames(cls)
 
-    try {
-      instance = new (cls as any)()
-    } catch {
-      instance = {}
+    let bestMatch:
+      | { sourceFile: ts.SourceFile; node: ts.ClassDeclaration }
+      | undefined
+    let bestScore = -1
+
+    for (const match of matches) {
+      let score = 0
+      for (const member of match.node.members) {
+        if (
+          ts.isPropertyDeclaration(member) &&
+          member.name &&
+          (ts.isIdentifier(member.name) || ts.isStringLiteral(member.name))
+        ) {
+          if (runtimeProps.has(member.name.text)) score++
+        }
+      }
+      if (score > bestScore) {
+        bestScore = score
+        bestMatch = match
+      }
     }
 
-    const instanceProperties = Object.keys(instance)
+    return bestMatch
+  }
 
-    const matchesMap: Record<number, number> = {}
+  /**
+   * Safely extracts property names from a class constructor without instantiation.
+   * Parses the class source via Function.prototype.toString() and inspects
+   * the prototype for method names.
+   */
+  private extractRuntimePropertyNames(cls: Function): Set<string> {
+    const names = new Set<string>()
 
-    matches.forEach((match, index) => {
-      let foundProperties = 0
-      match.node.members.forEach(member => {
-        if (member.name && instanceProperties.includes(member.name.getText()))
-          foundProperties++
-      })
-      matchesMap[index] = foundProperties
-    })
+    // Parse property names from the class source (safe: toString() is pure)
+    try {
+      const source = Function.prototype.toString.call(cls)
+      // Match constructor-compiled field assignments: this.propName = ...
+      const thisAssign = /this\.(\w+)\s*=/g
+      let m: RegExpExecArray | null
+      while ((m = thisAssign.exec(source)) !== null) {
+        if (m[1]) names.add(m[1])
+      }
+      // Match class-field declarations in both minified and multiline output.
+      // Fields appear after `}` or `;` terminators: fieldName= or fieldName; or fieldName}
+      const classField = /[;}](\w+)(?=[=;}\s])/g
+      while ((m = classField.exec(source)) !== null) {
+        if (m[1] && !constants.JS_KEYWORDS.has(m[1])) {
+          names.add(m[1])
+        }
+      }
+    } catch {
+      // toString() might be unavailable for some class types
+    }
 
-    const maxMatches = Math.max(...Object.values(matchesMap))
+    // Include prototype members (methods, getters) — safe, no instantiation
+    try {
+      for (const name of Object.getOwnPropertyNames(cls.prototype)) {
+        if (name !== 'constructor') names.add(name)
+      }
+    } catch {
+      // prototype might not be accessible
+    }
 
-    return matches[
-      Object.values(matchesMap).findIndex(value => value === maxMatches)
-    ]
+    return names
   }
 
   private getFilteredSourceFiles(sourceOptions?: {
@@ -815,11 +853,7 @@ export class SchemaTransformer {
 
     if (ts.isTypeReferenceNode(typeNode)) {
       const type = this.checker.getTypeAtLocation(typeNode)
-      // console.log('isEnum check:', typeNode.getText(), type.flags)
-      return (
-        !!(type.flags & ts.TypeFlags.Enum) ||
-        !!(type.flags & ts.TypeFlags.EnumLiteral)
-      )
+      return !!(type.flags & ts.TypeFlags.EnumLike)
     }
 
     return false
