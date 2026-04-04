@@ -30,7 +30,7 @@ class User {
 
 const schema = transform(User)
 
-console.log(JSON.stringify(shema), null, 2)
+console.log(JSON.stringify(schema), null, 2)
 ```
 
 **Generated output:**
