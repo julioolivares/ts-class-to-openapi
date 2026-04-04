@@ -91,11 +91,27 @@ export class SchemaTransformer {
         let baseProperties: PropertyInfo[] = []
 
         if (!type) return [] as PropertyInfo[]
-
         const symbol = this.checker.getSymbolAtLocation(type.expression)
         if (!symbol) return [] as PropertyInfo[]
 
-        const declaration = symbol.declarations?.[0]
+        const realSymbol =
+          symbol && symbol.flags & ts.SymbolFlags.Alias
+            ? this.checker.getAliasedSymbol(symbol)
+            : symbol
+
+        let declaration
+
+        if (
+          realSymbol &&
+          (realSymbol as any).links &&
+          (realSymbol as any).links.type &&
+          (realSymbol as any).links.type.symbol &&
+          (realSymbol as any).links.type.symbol.declarations
+        ) {
+          declaration = (realSymbol as any).links.type.symbol.declarations[0]
+        } else {
+          declaration = realSymbol?.declarations?.find(ts.isClassDeclaration)
+        }
 
         if (declaration && ts.isClassDeclaration(declaration)) {
           const newGenericTypeMap = new Map<string, string>()
