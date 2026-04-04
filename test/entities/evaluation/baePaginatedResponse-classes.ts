@@ -1,4 +1,4 @@
-class BasePaginatedResponse<Entity> {
+class BasePaginatedResponse<Entity = unknown> {
   // cursor: string
 
   rows: Entity[]
@@ -10,7 +10,7 @@ class BasePaginatedResponse<Entity> {
   prev: boolean
 }
 
-class UserReference {
+class UserReference extends BasePaginatedResponse<UserReference> {
   id: number
 
   name: string
@@ -26,14 +26,9 @@ class UserReference {
   roles: Array<string>
 }
 
-class UserPaginated extends BasePaginatedResponse<UserReference> {
-  // Additional properties or methods specific to user pagination can be added here
-}
-
 export const paginatedModule = {
   BasePaginatedResponse,
   UserReference,
-  UserPaginated,
 }
 
-export type { BasePaginatedResponse, UserReference, UserPaginated }
+export type { BasePaginatedResponse, UserReference }

@@ -27,6 +27,7 @@ export class SchemaTransformer {
   >()
 
   private transformCallIndex = new Map<string, Map<string, string>>()
+  private nonGenericTransformCalls = new Set<string>()
 
   private constructor(
     tsConfigPath: string = constants.TS_CONFIG_DEFAULT_PATH,
@@ -352,28 +353,30 @@ export class SchemaTransformer {
           return types[0]
         }
         return 'object'
-      default:
-        // Resolve indexed access types (e.g., (typeof Obj)[keyof typeof Obj]) via the type checker
-        if (ts.isIndexedAccessTypeNode(typeNode)) {
-          const resolvedType = this.checker.getTypeAtLocation(typeNode)
-          const resolved = this.checker.typeToString(resolvedType)
-          if (this.isPrimitiveType(resolved)) {
-            return resolved
-          }
-        }
-
-        const typeText = typeNode.getText()
+      default: {
+        // depending on getText() which can fail on synthetic/detached nodes.
+        // access types, type aliases, and other complex nodes reliably without
+        // Use the type-checker as the primary fallback — it resolves indexed
+        const resolvedType = this.checker.getTypeAtLocation(typeNode)
+        const resolved = this.checker.typeToString(resolvedType)
 
         // Check if this is a generic type parameter we can resolve
-        if (genericTypeMap && genericTypeMap.has(typeText)) {
-          return genericTypeMap.get(typeText)!
+        if (genericTypeMap && genericTypeMap.has(resolved)) {
+          return genericTypeMap.get(resolved)!
         }
 
-        // Handle some common TypeScript utility types
-        if (typeText.startsWith('Date')) return constants.jsPrimitives.Date.type
-        if (typeText.includes('Buffer') || typeText.includes('Uint8Array'))
-          return constants.jsPrimitives.Buffer.type
-        return typeText
+        if (this.isPrimitiveType(resolved)) {
+          return resolved
+        }
+
+        // For non-primitive resolved types, check if it maps to a known type
+        if (resolved === 'Date') return constants.jsPrimitives.Date.type
+        if (resolved === 'Buffer') return constants.jsPrimitives.Buffer.type
+        if (resolved === 'Uint8Array')
+          return constants.jsPrimitives.Uint8Array.type
+
+        return resolved
+      }
     }
   }
 
@@ -433,6 +436,10 @@ export class SchemaTransformer {
     if (ts.isIdentifier(callExpression.expression)) {
       return callExpression.expression.text
     }
+    // Support namespaced decorators like @validators.IsString()
+    if (ts.isPropertyAccessExpression(callExpression.expression)) {
+      return callExpression.expression.name.text
+    }
     return 'unknown'
   }
 
@@ -448,7 +455,18 @@ export class SchemaTransformer {
 
   private getSafeDecoratorArgument(arg: any): any {
     if (arg && typeof arg === 'object' && 'kind' in arg) {
-      return (arg as ts.Node).getText()
+      const node = arg as ts.Node
+      // Use the type-checker to evaluate constant values safely
+      // instead of getText() which fails on detached/synthetic nodes
+      const type = this.checker.getTypeAtLocation(node)
+      if (type.isNumberLiteral()) {
+        return type.value
+      }
+      if (type.isStringLiteral()) {
+        return type.value
+      }
+      // Fallback to typeToString for non-literal resolved types
+      return this.checker.typeToString(type)
     }
     return arg
   }
@@ -851,6 +869,18 @@ export class SchemaTransformer {
       typeNode = typeNode.elementType
     }
 
+    // Handle nullable enums: unwrap union types like `Status | null`
+    if (ts.isUnionTypeNode(typeNode)) {
+      const nonNullTypes = typeNode.types.filter(
+        t =>
+          t.kind !== ts.SyntaxKind.NullKeyword &&
+          t.kind !== ts.SyntaxKind.UndefinedKeyword
+      )
+      if (nonNullTypes.length === 1 && nonNullTypes[0]) {
+        typeNode = nonNullTypes[0]
+      }
+    }
+
     if (ts.isTypeReferenceNode(typeNode)) {
       const type = this.checker.getTypeAtLocation(typeNode)
       return !!(type.flags & ts.TypeFlags.EnumLike)
@@ -859,88 +889,78 @@ export class SchemaTransformer {
     return false
   }
 
+  /**
+   * Resolves a type node to its underlying symbol via the type-checker.
+   * For type references with type arguments (e.g., PayloadEntity<Person>),
+   * it checks the first type argument for a class declaration first.
+   * Returns the ts.Symbol or undefined.
+   */
+  private resolveClassSymbolFromTypeNode(
+    typeNode: ts.TypeNode
+  ): ts.Symbol | undefined {
+    // Priority: if this is a generic wrapper (PayloadEntity<Person>), resolve the inner class
+    if (
+      ts.isTypeReferenceNode(typeNode) &&
+      typeNode.typeArguments &&
+      typeNode.typeArguments.length > 0
+    ) {
+      const firstTypeArg = typeNode.typeArguments[0]
+      if (firstTypeArg) {
+        const argType = this.checker.getTypeAtLocation(firstTypeArg)
+        const argSymbol = argType.getSymbol()
+        if (argSymbol && argSymbol.declarations) {
+          const hasClass = argSymbol.declarations.some(decl =>
+            ts.isClassDeclaration(decl)
+          )
+          if (hasClass) return argSymbol
+        }
+      }
+    }
+
+    // Fallback: resolve the type node directly
+    const type = this.checker.getTypeAtLocation(typeNode)
+    return type.getSymbol() ?? undefined
+  }
+
+  /**
+   * Resolves the element type node from an array property declaration.
+   * Handles both `T[]` and `Array<T>` syntax.
+   */
+  private resolveArrayElementTypeNode(
+    propertyDeclaration: ts.PropertyDeclaration
+  ): ts.TypeNode | undefined {
+    if (!propertyDeclaration.type) return undefined
+
+    if (ts.isArrayTypeNode(propertyDeclaration.type)) {
+      return propertyDeclaration.type.elementType
+    }
+    if (
+      ts.isTypeReferenceNode(propertyDeclaration.type) &&
+      propertyDeclaration.type.typeArguments?.[0]
+    ) {
+      return propertyDeclaration.type.typeArguments[0]
+    }
+    return undefined
+  }
+
   private isClassType(propertyDeclaration: ts.PropertyDeclaration): boolean {
-    // If there's no explicit type annotation, we can't determine reliably
     if (!propertyDeclaration.type) {
       return false
     }
 
-    // Check if the original property type is an array type
-    if (this.isArrayProperty(propertyDeclaration)) {
-      // Resolve the element type node for both T[] and Array<T> syntax
-      let elementType: ts.TypeNode | undefined
-      if (ts.isArrayTypeNode(propertyDeclaration.type)) {
-        elementType = propertyDeclaration.type.elementType
-      } else if (
-        ts.isTypeReferenceNode(propertyDeclaration.type) &&
-        propertyDeclaration.type.typeArguments?.[0]
-      ) {
-        elementType = propertyDeclaration.type.typeArguments[0]
-      }
+    // Determine the type node to resolve — for arrays, use the element type
+    const typeNode = this.isArrayProperty(propertyDeclaration)
+      ? this.resolveArrayElementTypeNode(propertyDeclaration)
+      : propertyDeclaration.type
 
-      if (!elementType) return false
+    if (!typeNode) return false
 
-      // Special handling for utility types with type arguments (e.g., PayloadEntity<Person>)
-      if (
-        ts.isTypeReferenceNode(elementType) &&
-        elementType.typeArguments &&
-        elementType.typeArguments.length > 0
-      ) {
-        // Check the first type argument - it might be the actual class
-        const firstTypeArg = elementType.typeArguments[0]
-        if (firstTypeArg) {
-          const argType = this.checker.getTypeAtLocation(firstTypeArg)
-          const argSymbol = argType.getSymbol()
-          if (argSymbol && argSymbol.declarations) {
-            const hasClass = argSymbol.declarations.some(decl =>
-              ts.isClassDeclaration(decl)
-            )
-            if (hasClass) return true
-          }
-        }
-      }
-
-      // Get the type from the element, regardless of its syntaxkind
-      const type = this.checker.getTypeAtLocation(elementType)
-      const symbol = type.getSymbol()
-
-      if (symbol && symbol.declarations) {
-        return symbol.declarations.some(decl => ts.isClassDeclaration(decl))
-      }
-
-      return false
+    const symbol = this.resolveClassSymbolFromTypeNode(typeNode)
+    if (symbol && symbol.declarations) {
+      return symbol.declarations.some(decl => ts.isClassDeclaration(decl))
     }
-    // Check non-array types
-    else {
-      // Special handling for utility types with type arguments (e.g., PayloadEntity<Branch>)
-      if (
-        ts.isTypeReferenceNode(propertyDeclaration.type) &&
-        propertyDeclaration.type.typeArguments &&
-        propertyDeclaration.type.typeArguments.length > 0
-      ) {
-        // Check the first type argument - it might be the actual class
-        const firstTypeArg = propertyDeclaration.type.typeArguments[0]
-        if (firstTypeArg) {
-          const argType = this.checker.getTypeAtLocation(firstTypeArg)
-          const argSymbol = argType.getSymbol()
-          if (argSymbol && argSymbol.declarations) {
-            const hasClass = argSymbol.declarations.some(decl =>
-              ts.isClassDeclaration(decl)
-            )
-            if (hasClass) return true
-          }
-        }
-      }
 
-      const type = this.checker.getTypeAtLocation(propertyDeclaration.type)
-      const symbol = type.getSymbol()
-
-      if (symbol && symbol.declarations) {
-        return symbol.declarations.some(decl => ts.isClassDeclaration(decl))
-      }
-
-      return false
-    }
+    return false
   }
 
   private getDeclarationProperty(
@@ -950,72 +970,18 @@ export class SchemaTransformer {
       return undefined
     }
 
-    // Handle array types - get the element type
-    if (ts.isArrayTypeNode(property.originalProperty.type)) {
-      const elementType = property.originalProperty.type.elementType
+    // Determine the type node to resolve — for arrays, use the element type
+    const typeNode = ts.isArrayTypeNode(property.originalProperty.type)
+      ? property.originalProperty.type.elementType
+      : property.originalProperty.type
 
-      // Check if it's a utility type with type arguments (e.g., PayloadEntity<Branch>[])
-      if (
-        ts.isTypeReferenceNode(elementType) &&
-        elementType.typeArguments &&
-        elementType.typeArguments.length > 0
-      ) {
-        const firstTypeArg = elementType.typeArguments[0]
-        if (firstTypeArg) {
-          const argType = this.checker.getTypeAtLocation(firstTypeArg)
-          const argSymbol = argType.getSymbol()
-          if (argSymbol && argSymbol.declarations) {
-            const classDecl = argSymbol.declarations.find(decl =>
-              ts.isClassDeclaration(decl)
-            )
-            if (classDecl) return classDecl
-          }
-        }
-      }
-
-      const type = this.checker.getTypeAtLocation(elementType)
-      const symbol = type.getSymbol()
-
-      if (symbol && symbol.declarations) {
-        // Return the first class declaration found
-        const classDecl = symbol.declarations.find(decl =>
-          ts.isClassDeclaration(decl)
-        )
-        return classDecl || symbol.declarations[0]
-      }
-
-      return undefined
-    }
-
-    // Handle non-array types
-    // Check if it's a utility type with type arguments (e.g., PayloadEntity<Branch>)
-    if (
-      ts.isTypeReferenceNode(property.originalProperty.type) &&
-      property.originalProperty.type.typeArguments &&
-      property.originalProperty.type.typeArguments.length > 0
-    ) {
-      const firstTypeArg = property.originalProperty.type.typeArguments[0]
-      if (firstTypeArg) {
-        const argType = this.checker.getTypeAtLocation(firstTypeArg)
-        const argSymbol = argType.getSymbol()
-        if (argSymbol && argSymbol.declarations) {
-          const classDecl = argSymbol.declarations.find(decl =>
-            ts.isClassDeclaration(decl)
-          )
-          if (classDecl) return classDecl
-        }
-      }
-    }
-
-    const type = this.checker.getTypeAtLocation(property.originalProperty.type)
-    const symbol = type.getSymbol()
+    const symbol = this.resolveClassSymbolFromTypeNode(typeNode)
 
     if (symbol && symbol.declarations) {
-      // Return the first class declaration found
-      const classDecl = symbol.declarations.find(decl =>
-        ts.isClassDeclaration(decl)
+      return (
+        symbol.declarations.find(decl => ts.isClassDeclaration(decl)) ??
+        symbol.declarations[0]
       )
-      return classDecl || symbol.declarations[0]
     }
 
     return undefined
@@ -1118,10 +1084,20 @@ export class SchemaTransformer {
           declaration: property.genericClassReference,
         })
       } else {
-        schema = { type: 'object', properties: {}, additionalProperties: true }
+        const inner = {
+          type: 'object',
+          properties: {},
+          additionalProperties: true,
+        }
+        schema = property.isArray ? { type: 'array', items: inner } : inner
       }
     } else {
-      schema = { type: 'object', properties: {}, additionalProperties: true }
+      const inner = {
+        type: 'object',
+        properties: {},
+        additionalProperties: true,
+      }
+      schema = property.isArray ? { type: 'array', items: inner } : inner
     }
 
     this.applyDecorators(property, schema as SchemaType)
@@ -1299,7 +1275,30 @@ export class SchemaTransformer {
     }
 
     const propertySchema = { type: 'object' } as Property
-    const propertyType = property.type.toLowerCase().replace('[]', '').trim()
+
+    // Resolve the base type name via the TS type-checker for safety.
+    // For arrays, resolve the element type node instead of the full property.
+    let baseTypeNode: ts.TypeNode | undefined = property.originalProperty.type
+    if (property.isArray && baseTypeNode) {
+      baseTypeNode =
+        this.resolveArrayElementTypeNode(property.originalProperty) ??
+        baseTypeNode
+    }
+
+    const resolvedType = this.checker.getTypeAtLocation(
+      baseTypeNode ?? property.originalProperty
+    )
+
+    let propertyType: string
+    if (resolvedType.flags & ts.TypeFlags.TypeParameter) {
+      // Unresolved generic type parameter — the checker can't see through
+      // our runtime genericTypeMap, so fall back to the already-resolved
+      // property.type string (which went through getTypeNodeToString).
+      propertyType = property.type.toLowerCase().replace(/\[\]$/, '').trim()
+    } else {
+      propertyType = this.checker.typeToString(resolvedType).toLowerCase()
+    }
+
     let isFile = false
 
     switch (propertyType) {
@@ -1337,7 +1336,10 @@ export class SchemaTransformer {
         propertySchema.type = constants.jsPrimitives.Symbol.value
         break
       case constants.jsPrimitives.Object.value:
+      case 'unknown':
+      case 'any':
         propertySchema.type = constants.jsPrimitives.Object.value
+        ;(propertySchema as Record<string, unknown>).additionalProperties = true
         break
       default:
         propertySchema.type = constants.jsPrimitives.String.value
@@ -1345,13 +1347,21 @@ export class SchemaTransformer {
 
     if (property.isArray) {
       delete propertySchema.format
-      propertySchema.type = `array`
-      propertySchema.items = {
-        type: isFile ? constants.jsPrimitives.UploadFile.value : propertyType,
+      const resolvedItemType = propertySchema.type
+      const itemSchema: Record<string, unknown> = {
+        type: isFile
+          ? constants.jsPrimitives.UploadFile.value
+          : resolvedItemType,
         format: isFile
           ? constants.jsPrimitives.UploadFile.format
           : propertySchema.format,
       }
+      if ((propertySchema as Record<string, unknown>).additionalProperties) {
+        itemSchema.additionalProperties = true
+        delete (propertySchema as Record<string, unknown>).additionalProperties
+      }
+      propertySchema.type = `array`
+      propertySchema.items = itemSchema
     }
 
     return propertySchema
@@ -1708,6 +1718,18 @@ export class SchemaTransformer {
                   }
                 }
               }
+            } else {
+              // Non-generic transform(Foo) call — track the class name so we
+              // know the index is ambiguous when both generic and non-generic
+              // call sites exist for the same class.
+              const className = ts.isIdentifier(firstArg)
+                ? firstArg.text
+                : ts.isPropertyAccessExpression(firstArg)
+                  ? firstArg.name.text
+                  : undefined
+              if (className) {
+                this.nonGenericTransformCalls.add(className)
+              }
             }
           }
         }
@@ -1740,12 +1762,45 @@ export class SchemaTransformer {
       }
     }
 
-    // Look up the pre-computed generic type map by class name.
-    // buildTransformCallIndex() already scanned all transform(Foo<Bar>) calls
-    // in the program at construction time, so this is a plain O(1) Map lookup
-    // with zero runtime stack inspection.
-    const genericTypeMap =
-      this.transformCallIndex.get(cls.name) ?? new Map<string, string>()
+    // Build the generic type map for classes with type parameters.
+    //
+    // Strategy: if the class has type parameters with defaults (e.g. <Entity = unknown>),
+    // always use the defaults. The runtime transform(cls) call erases type args,
+    // so we can't distinguish transform(Foo) from transform(Foo<Bar>) at runtime.
+    // Defaults are the safe choice for the non-generic case.
+    //
+    // If the class has type parameters WITHOUT defaults, use the pre-computed
+    // transformCallIndex (from scanning transform(Foo<Bar>) call-sites at
+    // construction time) since the caller must always provide explicit type args.
+    const genericTypeMap = new Map<string, string>()
+
+    if (result.node.typeParameters) {
+      const indexedTypeMap = this.transformCallIndex.get(cls.name)
+      const hasNonGenericCall = this.nonGenericTransformCalls.has(cls.name)
+      const allHaveDefaults = result.node.typeParameters.every(p => !!p.default)
+
+      // When both generic and non-generic call sites exist for the same class,
+      // the index is ambiguous (runtime erases type args). In that case, prefer
+      // type parameter defaults so the non-generic call gets correct results.
+      // The generic call site resolves via the extending subclass instead.
+      if (indexedTypeMap && !(hasNonGenericCall && allHaveDefaults)) {
+        // Use the pre-scanned call-site type args (from transform(Foo<Bar>))
+        for (const [key, value] of indexedTypeMap) {
+          genericTypeMap.set(key, value)
+        }
+      } else {
+        // No call-site type args, or ambiguous — use type parameter defaults
+        for (const param of result.node.typeParameters) {
+          if (param.default) {
+            genericTypeMap.set(
+              param.name.text,
+              this.getTypeNodeToString(param.default, new Map())
+            )
+          }
+        }
+      }
+    }
+
     const hasGenericArgs = genericTypeMap.size > 0
 
     if (!hasGenericArgs && this.classCache.has(cls)) {
