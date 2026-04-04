@@ -146,8 +146,7 @@ export class SchemaTransformer {
     for (const member of members) {
       if (
         ts.isPropertyDeclaration(member) &&
-        member.name &&
-        (member.name as ts.Identifier)?.text
+        (ts.isIdentifier(member.name) || ts.isStringLiteral(member.name))
       ) {
         // Skip static, private, and protected properties
         if (member.modifiers) {
@@ -160,7 +159,7 @@ export class SchemaTransformer {
           if (hasExcludedModifier) continue
         }
 
-        const propertyName = (member.name as ts.Identifier).text
+        const propertyName = member.name.text
         const type = this.getPropertyType(member, genericTypeMap)
         const decorators = this.extractDecorators(member)
         const isOptional = !!member.questionToken
@@ -220,13 +219,11 @@ export class SchemaTransformer {
 
         if (
           property.isTypeLiteral &&
-          property.originalProperty.type &&
-          (property.originalProperty.type as ts.NodeWithTypeArguments)
-            .typeArguments?.length === 1
+          property.originalProperty.type !== undefined &&
+          ts.isTypeReferenceNode(property.originalProperty.type) &&
+          property.originalProperty.type.typeArguments?.length === 1
         ) {
-          const typeArguments = (
-            property.originalProperty.type as ts.NodeWithTypeArguments
-          ).typeArguments
+          const typeArguments = property.originalProperty.type.typeArguments
 
           if (typeArguments && typeArguments[0]) {
             const firstTypeArg = typeArguments[0]
@@ -280,10 +277,9 @@ export class SchemaTransformer {
 
       if (ts.isIdentifier(typeNode.typeName)) {
         typeName = typeNode.typeName.text
-      } else if (ts.isQualifiedName(typeNode.typeName)) {
-        typeName = typeNode.typeName.right.text
       } else {
-        typeName = (typeNode.typeName as any).getText()
+        // ts.QualifiedName — use the rightmost identifier (e.g., mod.ClassName → ClassName)
+        typeName = typeNode.typeName.right.text
       }
 
       if (genericTypeMap.has(typeName)) {
@@ -382,7 +378,12 @@ export class SchemaTransformer {
   }
 
   private resolveGenericType(typeNode: ts.TypeReferenceNode): string {
-    const typeName = (typeNode.typeName as ts.Identifier).text
+    let typeName: string
+    if (ts.isIdentifier(typeNode.typeName)) {
+      typeName = typeNode.typeName.text
+    } else {
+      typeName = typeNode.typeName.right.text
+    }
     const typeArguments = typeNode.typeArguments
 
     if (!typeArguments || typeArguments.length === 0) {
@@ -511,23 +512,24 @@ export class SchemaTransformer {
     // Check if it's a type reference with type arguments
     // But exclude simple arrays which internally use Array<T> representation
     if (
-      (type as any).typeArguments &&
-      (type as any).typeArguments.length > 0 &&
-      (type as any).typeArguments[0].symbol.getName() === 'Array'
+      type.flags & ts.TypeFlags.Object &&
+      (type as ts.ObjectType).objectFlags & ts.ObjectFlags.Reference
     ) {
-      const symbol = type.getSymbol()
-      if (symbol && symbol.getName() === 'Array') {
-        // This is Array<T> - only consider it generic if T itself is a utility type
-        const elementType = (type as any).typeArguments[0]
-        if (elementType) {
-          return this.isUtilityTypeFromType(elementType)
+      const typeArgs = this.checker.getTypeArguments(type as ts.TypeReference)
+      if (
+        typeArgs.length > 0 &&
+        typeArgs[0]?.getSymbol()?.getName() === 'Array'
+      ) {
+        const symbol = type.getSymbol()
+        if (symbol && symbol.getName() === 'Array') {
+          // This is Array<T> - only consider it generic if T itself is a utility type
+          const elementType = typeArgs[0]
+          return elementType ? this.isUtilityTypeFromType(elementType) : false
         }
-        return false
+
+        const elementType = typeArgs[0]
+        return elementType ? this.isUtilityTypeFromType(elementType) : false
       }
-
-      const elementType = (type as any).typeArguments[0]
-
-      return this.isUtilityTypeFromType(elementType)
     }
 
     // Check type flags for generic indicators
@@ -604,34 +606,38 @@ export class SchemaTransformer {
 
     // Check if this is Array<T> where T is a simple, non-generic type
     if (
-      (type as any).typeArguments &&
-      (type as any).typeArguments.length === 1
+      type.flags & ts.TypeFlags.Object &&
+      (type as ts.ObjectType).objectFlags & ts.ObjectFlags.Reference
     ) {
-      const elementType = (type as any).typeArguments[0]
-      if (!elementType) return false
+      const typeArgs = this.checker.getTypeArguments(type as ts.TypeReference)
+      if (typeArgs.length === 1) {
+        const elementType = typeArgs[0]!
 
-      // If the element type is a utility type, then this array should be considered generic
-      if (this.isUtilityTypeFromType(elementType)) {
-        return false
+        // If the element type is a utility type, then this array should be considered generic
+        if (this.isUtilityTypeFromType(elementType)) {
+          return false
+        }
+
+        // If the element type itself has generic parameters, this array is generic
+        if (
+          elementType.flags & ts.TypeFlags.Object &&
+          (elementType as ts.ObjectType).objectFlags & ts.ObjectFlags.Reference
+        ) {
+          const elementTypeArgs = this.checker.getTypeArguments(
+            elementType as ts.TypeReference
+          )
+          if (elementTypeArgs.length > 0) {
+            return false
+          }
+        }
+
+        const elementSymbol = elementType.getSymbol()
+        if (elementSymbol && elementSymbol.getName() !== 'Array') {
+          return false
+        }
+
+        return true
       }
-
-      // If the element type itself has generic parameters, this array is generic
-      if (
-        (elementType as any).typeArguments &&
-        (elementType as any).typeArguments.length > 0
-      ) {
-        return false
-      }
-
-      if (
-        (type as any).typeArguments &&
-        (type as any).typeArguments[0].symbol &&
-        (type as any).typeArguments[0].symbol.getName() !== 'Array'
-      ) {
-        return false
-      }
-
-      return true
     }
 
     return false
@@ -752,20 +758,18 @@ export class SchemaTransformer {
 
     const instanceProperties = Object.keys(instance)
 
-    let matchesMap = {}
+    const matchesMap: Record<number, number> = {}
 
     matches.forEach((match, index) => {
-      let fountProperties: number = 0
-      match.node.members.map(member => {
+      let foundProperties = 0
+      match.node.members.forEach(member => {
         if (member.name && instanceProperties.includes(member.name.getText()))
-          fountProperties++
+          foundProperties++
       })
-      matchesMap[index] = fountProperties
+      matchesMap[index] = foundProperties
     })
 
-    const maxMatches = Math.max(
-      ...(Object.values(matchesMap) as unknown as number[])
-    )
+    const maxMatches = Math.max(...Object.values(matchesMap))
 
     return matches[
       Object.values(matchesMap).findIndex(value => value === maxMatches)
@@ -1635,14 +1639,15 @@ export class SchemaTransformer {
 
           if (isTransformCall) {
             const firstArg = node.arguments[0]!
-            // Instantiation expression Foo<Bar>: typeArguments live on the node
-            // and .expression holds the base class identifier.
-            const typeArgs: ts.NodeArray<ts.TypeNode> | undefined = (
-              firstArg as any
-            ).typeArguments
-
-            if (typeArgs && typeArgs.length > 0) {
-              const baseExpr: ts.Node = (firstArg as any).expression ?? firstArg
+            // transform(Foo<Bar>) — the argument is an ExpressionWithTypeArguments
+            // node (kind 234) whose .expression and .typeArguments are directly
+            // available via the TS public API with no casts needed.
+            if (
+              ts.isExpressionWithTypeArguments(firstArg) &&
+              firstArg.typeArguments &&
+              firstArg.typeArguments.length > 0
+            ) {
+              const baseExpr = firstArg.expression
               // Support both `Foo<Bar>` (Identifier) and `mod.Foo<Bar>` (PropertyAccessExpression)
               const className = ts.isIdentifier(baseExpr)
                 ? baseExpr.text
@@ -1655,7 +1660,7 @@ export class SchemaTransformer {
                 if (classNode?.typeParameters) {
                   const typeMap = new Map<string, string>()
                   classNode.typeParameters.forEach((param, i) => {
-                    const typeArg = typeArgs[i]
+                    const typeArg = firstArg.typeArguments![i]
                     if (typeArg) {
                       typeMap.set(
                         param.name.text,
