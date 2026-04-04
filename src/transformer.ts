@@ -274,11 +274,18 @@ export class SchemaTransformer {
     typeNode: ts.TypeNode,
     genericTypeMap: Map<string, string> = new Map()
   ): string {
-    if (
-      ts.isTypeReferenceNode(typeNode) &&
-      ts.isIdentifier(typeNode.typeName)
-    ) {
-      const typeName = typeNode.typeName.text
+    if (ts.isTypeReferenceNode(typeNode)) {
+      // Resolve qualified names like `mod.ClassName` — use only the rightmost identifier
+      let typeName: string
+
+      if (ts.isIdentifier(typeNode.typeName)) {
+        typeName = typeNode.typeName.text
+      } else if (ts.isQualifiedName(typeNode.typeName)) {
+        typeName = typeNode.typeName.right.text
+      } else {
+        typeName = (typeNode.typeName as any).getText()
+      }
+
       if (genericTypeMap.has(typeName)) {
         return genericTypeMap.get(typeName)!
       }
@@ -316,7 +323,7 @@ export class SchemaTransformer {
         return this.resolveGenericType(typeNode)
       }
 
-      return typeNode.typeName.text
+      return typeName
     }
 
     switch (typeNode.kind) {
@@ -1636,9 +1643,15 @@ export class SchemaTransformer {
 
             if (typeArgs && typeArgs.length > 0) {
               const baseExpr: ts.Node = (firstArg as any).expression ?? firstArg
-              if (ts.isIdentifier(baseExpr)) {
-                const classNode = this.classFileIndex.get(baseExpr.text)?.[0]
-                  ?.node
+              // Support both `Foo<Bar>` (Identifier) and `mod.Foo<Bar>` (PropertyAccessExpression)
+              const className = ts.isIdentifier(baseExpr)
+                ? baseExpr.text
+                : ts.isPropertyAccessExpression(baseExpr)
+                  ? baseExpr.name.text
+                  : undefined
+
+              if (className) {
+                const classNode = this.classFileIndex.get(className)?.[0]?.node
                 if (classNode?.typeParameters) {
                   const typeMap = new Map<string, string>()
                   classNode.typeParameters.forEach((param, i) => {
@@ -1652,7 +1665,7 @@ export class SchemaTransformer {
                   })
                   if (typeMap.size > 0) {
                     // Key by class name — no stack trace needed at call time.
-                    this.transformCallIndex.set(baseExpr.text, typeMap)
+                    this.transformCallIndex.set(className, typeMap)
                   }
                 }
               }

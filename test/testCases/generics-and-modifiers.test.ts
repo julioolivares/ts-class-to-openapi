@@ -3,7 +3,7 @@ import { describe, it } from 'node:test'
 import { transform } from '../../src/index.js'
 import { AccessorAndModifiers } from '../entities/evaluation/modifiers.js'
 import { ConcreteString } from '../entities/evaluation/generics.js'
-import { UserPaginatedResponse } from '../entities/evaluation/baePaginatedResponse-classes.js'
+import { paginatedModule, UserReference } from '../entities/evaluation/baePaginatedResponse-classes.js'
 
 describe('Evaluation of Edge Cases', () => {
   it('should handle modifiers correctly (exclude private/static, include getters?)', () => {
@@ -44,7 +44,9 @@ describe('Evaluation of Edge Cases', () => {
   })
 
   it('should resolve generic array property to the concrete class schema', () => {
-    const { schema } = transform(UserPaginatedResponse)
+    const { schema } = transform(
+      paginatedModule.BasePaginatedResponse<UserReference>
+    )
     const props = schema.properties || {}
 
     assert.ok(props['rows'], 'rows property should be present')
