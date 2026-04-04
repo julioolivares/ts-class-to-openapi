@@ -1,5 +1,7 @@
 # 🔄 ts-class-to-openapi
 
+[![npm version](https://badge.fury.io/js/ts-class-to-openapi.svg)](https://www.npmjs.com/package/ts-class-to-openapi) [![npm downloads](https://img.shields.io/npm/dm/ts-class-to-openapi.svg)](https://www.npmjs.com/package/ts-class-to-openapi)
+
 ✨ **Transform TypeScript classes into OpenAPI 3.1.0 schemas**
 
 A robust and efficient library that automatically transforms TypeScript classes into OpenAPI-compatible schemas. Compatible with **pure TypeScript classes** and **class-validator decorated classes**.
