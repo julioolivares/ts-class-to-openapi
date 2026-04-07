@@ -200,7 +200,93 @@ const schema = transform(User)
 }
 ```
 
-### 3. Enumerations and Special Types
+### 3. Class Inheritance
+
+Full support for class inheritance via `extends`. Properties from parent classes are automatically included in the generated schema, and generic type parameters are resolved:
+
+```typescript
+import { transform } from 'ts-class-to-openapi'
+
+class Base<T> {
+  data: T
+}
+
+class ConcreteString extends Base<string> {
+  other: number
+}
+
+const schema = transform(ConcreteString)
+```
+
+**Generated output:**
+
+```json
+{
+  "name": "ConcreteString",
+  "schema": {
+    "type": "object",
+    "properties": {
+      "data": { "type": "string" },
+      "other": { "type": "number" }
+    },
+    "required": ["data", "other"]
+  }
+}
+```
+
+### 4. Generic Classes
+
+Transform generic classes with concrete type arguments. The library scans your `transform()` call sites at build time to resolve the generic type parameters:
+
+```typescript
+import { transform } from 'ts-class-to-openapi'
+
+class PaginatedResponse<Entity> {
+  rows: Entity[]
+  cursor?: string
+  next: boolean
+  prev: boolean
+}
+
+class User {
+  id: number
+  name: string
+  email: string
+}
+
+const schema = transform(PaginatedResponse<User>)
+```
+
+**Generated output:**
+
+```json
+{
+  "name": "PaginatedResponse",
+  "schema": {
+    "type": "object",
+    "properties": {
+      "rows": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": { "type": "number" },
+            "name": { "type": "string" },
+            "email": { "type": "string" }
+          },
+          "required": ["id", "name", "email"]
+        }
+      },
+      "cursor": { "type": "string" },
+      "next": { "type": "boolean" },
+      "prev": { "type": "boolean" }
+    },
+    "required": ["rows", "next", "prev"]
+  }
+}
+```
+
+### 5. Enumerations and Special Types
 
 Full compatibility with TypeScript enumerations (both decorated and pure), and literal object as enums:
 
@@ -482,7 +568,7 @@ app.listen(3000, () => {
 
 ## 📖 API Reference
 
-### `transform(class: Function)`
+### `transform(class)`
 
 Transforms a class constructor function into an OpenAPI schema object.
 
@@ -513,6 +599,45 @@ const result = transform(User)
 console.log(result.name) // "User"
 console.log(result.schema) // OpenAPI schema object
 ```
+
+## 🔒 Access Modifiers
+
+Properties with `private` or `protected` modifiers are automatically excluded from the generated schema. Only `public` properties (the default in TypeScript) are included:
+
+```typescript
+import { transform } from 'ts-class-to-openapi'
+
+class User {
+  public name: string // ✅ Included
+  email: string // ✅ Included (public by default)
+  private password: string // ❌ Excluded
+  protected role: string // ❌ Excluded
+}
+
+const schema = transform(User)
+// schema.properties will only contain "name" and "email"
+```
+
+## 📋 Supported TypeScript Types
+
+The following TypeScript types are automatically mapped to OpenAPI schema types:
+
+| TypeScript Type                         | OpenAPI Type         | Format      | Description                       |
+| --------------------------------------- | -------------------- | ----------- | --------------------------------- |
+| `string`                                | `string`             | —           | String values                     |
+| `number`                                | `number`             | `integer`   | Numeric values                    |
+| `boolean`                               | `boolean`            | —           | Boolean values                    |
+| `Date`                                  | `string`             | `date-time` | Date/time values                  |
+| `BigInt`                                | `integer`            | `int64`     | Large integer values              |
+| `Buffer` / `Uint8Array`                 | `string`             | `binary`    | Binary data                       |
+| `File`                                  | `binary`             | `binary`    | Binary data                       |
+| `Symbol`                                | `string`             | —           | Mapped as string                  |
+| `any` / `unknown`                       | `object`             | —           | With `additionalProperties: true` |
+| `T[]` / `Array<T>`                      | `array`              | —           | Typed arrays                      |
+| `enum`                                  | `string` or `number` | —           | With `enum` values                |
+| `string \| null`                        | `string`             | —           | Union types (nullable filtered)   |
+
+> **Union types**: For union types like `string | null` or `Date | undefined`, the library filters out `null` and `undefined` and uses the first meaningful type.
 
 ## 🎯 Required Properties Rules
 
@@ -596,17 +721,19 @@ class User {
 
 ## 📊 Comparison: Pure TypeScript vs Enhanced Mode
 
-| Feature                | Pure TypeScript                       | Enhanced (class-validator)           |
-| ---------------------- | ------------------------------------- | ------------------------------------ |
-| **Dependencies**       | Zero                                  | Requires `class-validator`           |
-| **Configuration**      | None                                  | `experimentalDecorators: true`       |
-| **Type Detection**     | Automatic                             | Automatic + Decorators               |
-| **Validation Rules**   | Basic types only                      | Rich validation constraints          |
-| **Required Fields**    | Based on optional operator (`?`)      | Optional operator + decorators       |
-| **String Constraints** | None                                  | Min/max length, patterns             |
-| **Number Constraints** | None                                  | Min/max values, positive             |
-| **Array Constraints**  | None                                  | Min/max items, non-empty             |
-| **Use Case**           | Existing codebases, rapid prototyping | APIs with validation, robust schemas |
+| Feature                 | Pure TypeScript                       | Enhanced (class-validator)           |
+| ----------------------- | ------------------------------------- | ------------------------------------ |
+| **Dependencies**        | Zero                                  | Requires `class-validator`           |
+| **Configuration**       | None                                  | `experimentalDecorators: true`       |
+| **Type Detection**      | Automatic                             | Automatic + Decorators               |
+| **Validation Rules**    | Basic types only                      | Rich validation constraints          |
+| **Required Fields**     | Based on optional operator (`?`)      | Optional operator + decorators       |
+| **String Constraints**  | None                                  | Min/max length, patterns             |
+| **Number Constraints**  | None                                  | Min/max values, positive             |
+| **Array Constraints**   | None                                  | Min/max items, non-empty             |
+| **Inheritance**         | ✅ Supported                          | ✅ Supported                         |
+| **Circular References** | ✅ Auto `$ref` generation             | ✅ Auto `$ref` generation            |
+| **Use Case**            | Existing codebases, rapid prototyping | APIs with validation, robust schemas |
 
 ## ⚙️ Configuration
 
@@ -695,9 +822,15 @@ Pure TypeScript classes work immediately, but if you want enhanced validation sc
 - ✅ **Native pure TypeScript support** - Compatible with any TypeScript class without requiring decorators
 - ✅ **Zero runtime dependencies** - Uses TypeScript Compiler API instead of reflect-metadata
 - ✅ **Optimized performance** - Singleton pattern implementation with caching system for repeated transformations
+- ✅ **Class inheritance** - Automatic resolution of properties from parent classes via `extends`
+- ✅ **Generics resolution** - Resolves generic type parameters from call-site type arguments (e.g., `transform(Paginated<User>)`)
+- ✅ **Circular reference handling** - Automatically generates `$ref` references for self-referencing and mutually recursive classes
+- ✅ **Class name collision detection** - Smart property matching when multiple classes share the same name, with `filePath` disambiguation
+- ✅ **Access modifier filtering** - Excludes `private` and `protected` properties from the schema
 - ✅ **Nested object processing** - Automatic handling of complex relationships between objects
-- ✅ **Full typed array support** - Comprehensive compatibility with arrays and validation constraints
-- ✅ **Integrated caching system** - Avoids reprocessing the same classes
+- ✅ **Full typed array support** - Comprehensive compatibility with arrays (`T[]` and `Array<T>`) and validation constraints
+- ✅ **Union type support** - Handles union types by filtering out `null` and `undefined`
+- ✅ **Integrated caching system** - Avoids reprocessing the same classes with configurable cache size
 - ✅ **Type safety** - Complete TypeScript support with precise type definitions
 - ✅ **Framework agnostic** - Compatible with any TypeScript project configuration
 

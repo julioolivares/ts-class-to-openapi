@@ -3,10 +3,16 @@ import {
   UserReference,
 } from '../test/entities/evaluation/baePaginatedResponse-classes.js'
 
-import { SimplePerson } from '../test/entities/pure-classes.js'
+class User {
+  name: string
+
+  lastName: string
+
+  profilePicture?: File
+}
 
 import { transform } from './index.js'
 
-const schema = transform(paginatedModule.BasePaginatedResponse<SimplePerson>)
+const schema = transform(User)
 
 console.log(JSON.stringify(schema, null, 2))
