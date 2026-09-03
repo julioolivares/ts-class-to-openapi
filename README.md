@@ -22,6 +22,9 @@ A robust and efficient library that automatically transforms TypeScript classes 
 import { transform } from 'ts-class-to-openapi'
 
 class User {
+  /**
+   * User identifier, is a primary key
+   */
   id: number
   name: string
   email: string
@@ -41,7 +44,10 @@ console.log(JSON.stringify(schema, null, 2))
   "schema": {
     "type": "object",
     "properties": {
-      "id": { "type": "number" },
+      "id": {
+        "type": "number",
+        "description": "User identifier, is a primary key"
+      },
       "name": { "type": "string" },
       "email": { "type": "string" },
       "age": { "type": "number" }
@@ -622,20 +628,20 @@ const schema = transform(User)
 
 The following TypeScript types are automatically mapped to OpenAPI schema types:
 
-| TypeScript Type                         | OpenAPI Type         | Format      | Description                       |
-| --------------------------------------- | -------------------- | ----------- | --------------------------------- |
-| `string`                                | `string`             | —           | String values                     |
-| `number`                                | `number`             | `integer`   | Numeric values                    |
-| `boolean`                               | `boolean`            | —           | Boolean values                    |
-| `Date`                                  | `string`             | `date-time` | Date/time values                  |
-| `BigInt`                                | `integer`            | `int64`     | Large integer values              |
-| `Buffer` / `Uint8Array`                 | `string`             | `binary`    | Binary data                       |
-| `File`                                  | `binary`             | `binary`    | Binary data                       |
-| `Symbol`                                | `string`             | —           | Mapped as string                  |
-| `any` / `unknown`                       | `object`             | —           | With `additionalProperties: true` |
-| `T[]` / `Array<T>`                      | `array`              | —           | Typed arrays                      |
-| `enum`                                  | `string` or `number` | —           | With `enum` values                |
-| `string \| null`                        | `string`             | —           | Union types (nullable filtered)   |
+| TypeScript Type         | OpenAPI Type         | Format      | Description                       |
+| ----------------------- | -------------------- | ----------- | --------------------------------- |
+| `string`                | `string`             | —           | String values                     |
+| `number`                | `number`             | `integer`   | Numeric values                    |
+| `boolean`               | `boolean`            | —           | Boolean values                    |
+| `Date`                  | `string`             | `date-time` | Date/time values                  |
+| `BigInt`                | `integer`            | `int64`     | Large integer values              |
+| `Buffer` / `Uint8Array` | `string`             | `binary`    | Binary data                       |
+| `File`                  | `binary`             | `binary`    | Binary data                       |
+| `Symbol`                | `string`             | —           | Mapped as string                  |
+| `any` / `unknown`       | `object`             | —           | With `additionalProperties: true` |
+| `T[]` / `Array<T>`      | `array`              | —           | Typed arrays                      |
+| `enum`                  | `string` or `number` | —           | With `enum` values                |
+| `string \| null`        | `string`             | —           | Union types (nullable filtered)   |
 
 > **Union types**: For union types like `string | null` or `Date | undefined`, the library filters out `null` and `undefined` and uses the first meaningful type.
 
@@ -647,7 +653,13 @@ The presence or absence of the TypeScript optional operator (`?`) determines whe
 
 ```typescript
 class User {
+  /**
+   * Name of user
+   * */
   name: string // ✅ REQUIRED (no ? operator)
+  /*
+   * Email
+   */
   email: string // ✅ REQUIRED (no ? operator)
   age?: number // ❌ OPTIONAL (has ? operator)
   bio?: string // ❌ OPTIONAL (has ? operator)
@@ -665,6 +677,9 @@ class-validator decorators can override the default behavior of the TypeScript o
 import { IsNotEmpty, IsOptional } from 'class-validator'
 
 class User {
+  /**
+   * Comment property
+   */
   @IsNotEmpty()
   requiredField?: string // ✅ REQUIRED (@IsNotEmpty overrides ?)
 
