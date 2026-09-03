@@ -186,6 +186,7 @@ export class SchemaTransformer {
         const isClassType = this.isClassType(member)
         const isArray = this.isArrayProperty(member)
         const isTypeLiteral = this.isTypeLiteral(member)
+        const comment = this.getJsComment(member)
 
         let genericClassReference: ts.ClassDeclaration | undefined = undefined
         if (isGeneric && !isPrimitive) {
@@ -212,6 +213,7 @@ export class SchemaTransformer {
           isRef: false,
           isTypeLiteral: isTypeLiteral,
           genericClassReference,
+          jsComment: comment,
         }
 
         // Check for self-referencing properties to mark as $ref
@@ -270,6 +272,23 @@ export class SchemaTransformer {
     }
 
     return properties
+  }
+
+  /**
+   * Retrieves the JSDoc comment associated with a property declaration.
+   * @param {ts.PropertyDeclaration} member
+   * @returns {string|undefined}
+   */
+  private getJsComment(member: ts.PropertyDeclaration): string | undefined {
+    const jsDocComments = ts
+      .getJSDocCommentsAndTags(member)
+      .filter(node => ts.isJSDoc(node))
+      .map(doc => ts.getTextOfJSDocComment(doc.comment)?.trim())
+      .filter((text): text is string => !!text)
+
+    if (jsDocComments.length > 0) {
+      return jsDocComments.join('\n')
+    }
   }
 
   private getPropertyType(
@@ -1116,6 +1135,8 @@ export class SchemaTransformer {
       schema = property.isArray ? { type: 'array', items: inner } : inner
     }
 
+    schema.description = property.jsComment
+
     this.applyDecorators(property, schema as SchemaType)
 
     return schema
@@ -1677,9 +1698,6 @@ export class SchemaTransformer {
    */
   private buildTransformCallIndex(): void {
     this.program.getSourceFiles().forEach(sf => {
-      if (sf.isDeclarationFile) return
-
-      // Build classFileIndex and transformCallIndex in a single pass
       sf.statements.forEach(stmt => {
         if (ts.isClassDeclaration(stmt) && stmt.name) {
           const name = stmt.name.text
