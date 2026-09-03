@@ -1,5 +1,9 @@
 import ts from 'typescript'
-type Property = ({ [key: string]: any } & { type: string }) | SchemaType
+type Property =
+  | ({ [key: string]: any } & { type: string } & {
+      description?: string | undefined
+    })
+  | SchemaType
 
 // Support for both regular schemas and $ref schemas (OpenAPI 3.1)
 type SchemaType =
@@ -63,6 +67,8 @@ interface PropertyInfo {
 
   /** The class declaration reference when the property is a resolved generic type pointing to a class */
   genericClassReference?: ts.ClassDeclaration | undefined
+
+  jsComment?: string | undefined
 }
 
 /**
