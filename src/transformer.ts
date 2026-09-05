@@ -48,6 +48,15 @@ export class SchemaTransformer {
       throw new Error(`Error reading tsconfig file: ${error.messageText}`)
     }
 
+    config.compilerOptions.declaration = false
+    config.compilerOptions.declarationMap = false
+    config.compilerOptions.inlineSourceMap = true
+    config.compilerOptions.sourceMap = false
+    config.compilerOptions.skipLibCheck = true
+    config.compilerOptions.skipDefaultLibCheck = true
+    config.compilerOptions.noEmit = true
+    config.compilerOptions.incremental = false
+
     const { options: tsOptions, fileNames } = ts.parseJsonConfigFileContent(
       config,
       ts.sys,
@@ -109,6 +118,15 @@ export class SchemaTransformer {
           (realSymbol as any).links.type.symbol.declarations
         ) {
           declaration = (realSymbol as any).links.type.symbol.declarations[0]
+        }
+        if (
+          realSymbol.declarations &&
+          realSymbol.declarations[0] &&
+          realSymbol.declarations[0].kind == ts.SyntaxKind.PropertySignature &&
+          this.classFileIndex.has(realSymbol.name)
+        ) {
+          declaration = (this.classFileIndex.get(realSymbol.name) as any[])[0]
+            .node
         } else {
           declaration = realSymbol?.declarations?.find(ts.isClassDeclaration)
         }
@@ -736,7 +754,6 @@ export class SchemaTransformer {
   private getSourceFileByClass(
     cls: Function,
     sourceOptions?: {
-      isExternal: boolean
       packageName: string
       filePath?: string
     }
@@ -744,27 +761,11 @@ export class SchemaTransformer {
     const className = cls.name
     let matches: { sourceFile: ts.SourceFile; node: ts.ClassDeclaration }[] = []
 
-    if (sourceOptions?.isExternal) {
-      const sourceFiles = this.getFilteredSourceFiles(sourceOptions)
-      for (const sourceFile of sourceFiles) {
-        const node = sourceFile.statements.find(
-          stmt =>
-            ts.isClassDeclaration(stmt) &&
-            stmt.name &&
-            stmt.name.text === className
-        ) as ts.ClassDeclaration | undefined
-
-        if (node) {
-          matches.push({ sourceFile, node })
-        }
-      }
-    } else {
-      matches = this.classFileIndex.get(className) || []
-      if (sourceOptions?.filePath) {
-        matches = matches.filter(m =>
-          m.sourceFile.fileName.includes(sourceOptions.filePath!)
-        )
-      }
+    matches = this.classFileIndex.get(className) || []
+    if (sourceOptions?.filePath) {
+      matches = matches.filter(m =>
+        m.sourceFile.fileName.includes(sourceOptions.filePath!)
+      )
     }
 
     if (matches.length === 0) {
@@ -1776,7 +1777,6 @@ export class SchemaTransformer {
   public transform(
     cls: Function,
     sourceOptions?: {
-      isExternal: boolean
       packageName: string
       filePath?: string
     }
