@@ -25,9 +25,9 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "tsx --test test/testCases/**/*.test.ts",
-    "test:watch": "tsx --inspect --test --watch test/testCases/**/*.test.ts",
-    "test:coverage": "tsx --test --experimental-test-coverage test/testCases/**/*.test.ts",
+    "test": "tsx --test test/testCases/*.test.ts",
+    "test:watch": "tsx --inspect --test --watch test/testCases/*.test.ts",
+    "test:coverage": "tsx --test --experimental-test-coverage test/testCases/*.test.ts",
     "build": "tsc --noEmit && tsdown",
     "build:watch": "rm -rf dist && tsdown --watch",
     "dev": "tsx --inspect --watch ./src/run.ts",
