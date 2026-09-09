@@ -16,17 +16,6 @@ describe('Evaluation of Edge Cases', () => {
     // Public should be present
     assert.ok(props['publicProp'], 'Public property should be present')
 
-    // Private/Protected/Static should ideally be excluded in an API schema
-    // Checking current behavior
-    console.log('Modifiers props:', Object.keys(props))
-
-    // Getters are often treated as properties in JSON serialization
-    // Checking current behavior
-    if (props['computedProp']) {
-      console.log('Getter is present')
-    } else {
-      console.log('Getter is missing')
-    }
   })
 
   it('should handle generic inheritance', () => {
@@ -36,9 +25,6 @@ describe('Evaluation of Edge Cases', () => {
     assert.ok(props['other'], 'Own property should be present')
     assert.ok(props['data'], 'Inherited property should be present')
 
-    // The type of 'data' should be 'string', not 'T' or 'object'
-    console.log('Generic data type:', props['data'].type)
-    console.log(props['data'])
     assert.strictEqual(
       props['data'].type,
       'string',
