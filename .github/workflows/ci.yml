@@ -60,4 +60,4 @@ jobs:
       - run: pnpm build
 
       - name: Inspect publishable contents
-        run: pnpm pack --dry-run
+        run: mkdir -p /tmp/pack && pnpm pack --json --pack-destination /tmp/pack
