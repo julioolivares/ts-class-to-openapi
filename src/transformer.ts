@@ -803,8 +803,7 @@ export class SchemaTransformer {
     const runtimeProps = this.extractRuntimePropertyNames(cls)
 
     let bestMatch:
-      | { sourceFile: ts.SourceFile; node: ts.ClassDeclaration }
-      | undefined
+      { sourceFile: ts.SourceFile; node: ts.ClassDeclaration } | undefined
     let bestScore = -1
 
     for (const match of matches) {
@@ -1497,6 +1496,44 @@ export class SchemaTransformer {
     }
   }
 
+  private applyIsInDecorator(
+    decorator: DecoratorInfo,
+    schema: SchemaType
+  ): void {
+    if (decorator.arguments.length === 0) return
+
+    const arg = decorator.arguments[0]
+    if (arg && typeof arg === 'object' && 'kind' in arg) {
+      if (ts.isArrayLiteralExpression(arg as ts.Node)) {
+        const values = this.extractValuesFromArrayLiteral(
+          arg as ts.ArrayLiteralExpression
+        )
+        if (values.length > 0) {
+          schema.enum = values
+        }
+      }
+    }
+  }
+
+  private applyIsNotInDecorator(
+    decorator: DecoratorInfo,
+    schema: SchemaType
+  ): void {
+    if (decorator.arguments.length === 0) return
+
+    const arg = decorator.arguments[0]
+    if (arg && typeof arg === 'object' && 'kind' in arg) {
+      if (ts.isArrayLiteralExpression(arg as ts.Node)) {
+        const values = this.extractValuesFromArrayLiteral(
+          arg as ts.ArrayLiteralExpression
+        )
+        if (values.length > 0) {
+          schema.not = { enum: values }
+        }
+      }
+    }
+  }
+
   private extractValuesFromArrayLiteral(
     arrayLiteral: ts.ArrayLiteralExpression
   ): (string | number)[] {
@@ -1677,14 +1714,38 @@ export class SchemaTransformer {
           )
           break
         case constants.validatorDecorators.IsEnum.name:
-          if (!property.isArray) {
-            this.applyEnumDecorator(decorator, schema)
-          } else {
+          if (property.isArray) {
             if (!schema.items) {
               schema.type = 'array'
               schema.items = {} as SchemaType
             }
             this.applyEnumDecorator(decorator, schema.items)
+          } else {
+            this.applyEnumDecorator(decorator, schema)
+          }
+          break
+        case constants.validatorDecorators.IsIn.name:
+          if (property.isArray) {
+            if (!schema.items) {
+              schema.type = 'array'
+              schema.items = {} as SchemaType
+            }
+            this.applyIsInDecorator(decorator, schema.items)
+          } else {
+
+            this.applyIsInDecorator(decorator, schema)
+
+          }
+          break
+        case constants.validatorDecorators.IsNotIn.name:
+          if (property.isArray) {
+            if (!schema.items) {
+              schema.type = 'array'
+              schema.items = {} as SchemaType
+            }
+            this.applyIsNotInDecorator(decorator, schema.items)
+          } else {
+            this.applyIsNotInDecorator(decorator, schema)
           }
           break
       }

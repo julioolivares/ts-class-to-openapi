@@ -6,6 +6,7 @@
   "main": "./dist/index.cjs",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.mts",
+  "packageManager": "pnpm@10.17.1",
   "exports": {
     ".": {
       "import": {
@@ -24,12 +25,13 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node --import tsx --test test/testCases/**/*.test.ts",
-    "test:watch": "node --import tsx --inspect --test --watch test/testCases/**/*.test.ts",
-    "test:coverage": "node --import tsx --test --experimental-test-coverage test/testCases/**/*.test.ts",
+    "test": "tsx --test test/testCases/*.test.ts",
+    "prettier": "prettier --write ./src/",
+    "test:watch": "tsx --inspect --test --watch test/testCases/*.test.ts",
+    "test:coverage": "tsx --test --experimental-test-coverage test/testCases/*.test.ts",
     "build": "tsc --noEmit && tsdown",
     "build:watch": "rm -rf dist && tsdown --watch",
-    "dev": "node --import tsx --inspect --watch ./src/run.ts",
+    "dev": "tsx --inspect --watch ./src/run.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "prepublish": "pnpm build",
@@ -83,10 +85,9 @@
   },
   "devDependencies": {
     "@types/node": "24.2.1",
-    "prettier": "3.6.2",
+    "prettier": "3.9.6",
     "tsdown": "0.21.4",
-    "tslib": "2.8.1",
-    "tsx": "4.21.0"
+    "tsx": "4.23.13"
   },
   "package": "./package-dist.json"
 }
