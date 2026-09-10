@@ -698,15 +698,17 @@ class User {
 
 ### Type Validation Decorators
 
-| Decorator             | Generated Schema Property                       | Description                |
-| --------------------- | ----------------------------------------------- | -------------------------- |
-| `@IsString()`         | `type: "string"`                                | String type validation     |
-| `@IsInt()`            | `type: "integer", format: "int32"`              | Integer type validation    |
-| `@IsNumber()`         | `type: "number", format: "double"`              | Number type validation     |
-| `@IsBoolean()`        | `type: "boolean"`                               | Boolean type validation    |
-| `@IsEmail()`          | `type: "string", format: "email"`               | Email format validation    |
-| `@IsDate()`           | `type: "string", format: "date-time"`           | Date format validation     |
-| `@IsEnum(enumObject)` | `type: "string/number/boolean", enum: [values]` | Enum constraint validation |
+| Decorator                        | Generated Schema Property                       | Description                       |
+| -------------------------------- | ----------------------------------------------- | --------------------------------- |
+| `@IsString()`                    | `type: "string"`                                | String type validation            |
+| `@IsInt()`                       | `type: "integer", format: "int32"`              | Integer type validation           |
+| `@IsNumber()`                    | `type: "number", format: "double"`              | Number type validation            |
+| `@IsBoolean()`                   | `type: "boolean"`                               | Boolean type validation           |
+| `@IsEmail()`                     | `type: "string", format: "email"`               | Email format validation           |
+| `@IsDate()`                      | `type: "string", format: "date-time"`           | Date format validation            |
+| `@IsEnum(enumObject)`            | `type: "string/number/boolean", enum: [values]` | Enum constraint validation        |
+| `@IsIn(['value a', 'value b'])`  | `type: "string/number/boolean"`                 | List value constraint             |
+| `@IsNotIn(['a', 'value b'])`     | `type: "string/number/boolean"`                 | List value constraint not allowed |
 
 ### String Validation Decorators
 
