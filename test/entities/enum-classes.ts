@@ -92,3 +92,37 @@ export class ArrayLiteralEnumTestEntity {
   @IsEnum(NumericLiteralEnum, { each: true })
   priorities: (typeof NumericLiteralEnum)[keyof typeof NumericLiteralEnum][]
 }
+
+import { IsIn, IsNotIn, IsArray, IsOptional as IsOptionalAlias } from 'class-validator'
+
+export class IsInStringEntity {
+  @IsIn(['admin', 'editor', 'viewer'])
+  role: string
+}
+
+export class IsInNumberEntity {
+  @IsIn([1, 2, 3])
+  priority: number
+}
+
+export class IsInMixedEntity {
+  @IsIn(['active', 0])
+  status: string
+}
+
+export class IsInArrayEntity {
+  @IsArray()
+  @IsIn(['admin', 'editor', 'viewer'], { each: true })
+  roles: string[]
+}
+
+export class IsNotInEntity {
+  @IsNotIn(['banned', 'suspended'])
+  role: string
+}
+
+export class IsNotInArrayEntity {
+  @IsArray()
+  @IsNotIn(['banned', 'suspended'], { each: true })
+  roles: string[]
+}

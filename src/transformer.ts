@@ -1496,6 +1496,44 @@ export class SchemaTransformer {
     }
   }
 
+  private applyIsInDecorator(
+    decorator: DecoratorInfo,
+    schema: SchemaType
+  ): void {
+    if (decorator.arguments.length === 0) return
+
+    const arg = decorator.arguments[0]
+    if (arg && typeof arg === 'object' && 'kind' in arg) {
+      if (ts.isArrayLiteralExpression(arg as ts.Node)) {
+        const values = this.extractValuesFromArrayLiteral(
+          arg as ts.ArrayLiteralExpression
+        )
+        if (values.length > 0) {
+          schema.enum = values
+        }
+      }
+    }
+  }
+
+  private applyIsNotInDecorator(
+    decorator: DecoratorInfo,
+    schema: SchemaType
+  ): void {
+    if (decorator.arguments.length === 0) return
+
+    const arg = decorator.arguments[0]
+    if (arg && typeof arg === 'object' && 'kind' in arg) {
+      if (ts.isArrayLiteralExpression(arg as ts.Node)) {
+        const values = this.extractValuesFromArrayLiteral(
+          arg as ts.ArrayLiteralExpression
+        )
+        if (values.length > 0) {
+          schema.not = { enum: values }
+        }
+      }
+    }
+  }
+
   private extractValuesFromArrayLiteral(
     arrayLiteral: ts.ArrayLiteralExpression
   ): (string | number)[] {
@@ -1684,6 +1722,28 @@ export class SchemaTransformer {
             this.applyEnumDecorator(decorator, schema.items)
           } else {
             this.applyEnumDecorator(decorator, schema)
+          }
+          break
+        case constants.validatorDecorators.IsIn.name:
+          if (!property.isArray) {
+            this.applyIsInDecorator(decorator, schema)
+          } else {
+            if (!schema.items) {
+              schema.type = 'array'
+              schema.items = {} as SchemaType
+            }
+            this.applyIsInDecorator(decorator, schema.items)
+          }
+          break
+        case constants.validatorDecorators.IsNotIn.name:
+          if (!property.isArray) {
+            this.applyIsNotInDecorator(decorator, schema)
+          } else {
+            if (!schema.items) {
+              schema.type = 'array'
+              schema.items = {} as SchemaType
+            }
+            this.applyIsNotInDecorator(decorator, schema.items)
           }
           break
       }
