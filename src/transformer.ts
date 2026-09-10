@@ -1725,25 +1725,27 @@ export class SchemaTransformer {
           }
           break
         case constants.validatorDecorators.IsIn.name:
-          if (!property.isArray) {
-            this.applyIsInDecorator(decorator, schema)
-          } else {
+          if (property.isArray) {
             if (!schema.items) {
               schema.type = 'array'
               schema.items = {} as SchemaType
             }
             this.applyIsInDecorator(decorator, schema.items)
+          } else {
+
+            this.applyIsInDecorator(decorator, schema)
+
           }
           break
         case constants.validatorDecorators.IsNotIn.name:
-          if (!property.isArray) {
-            this.applyIsNotInDecorator(decorator, schema)
-          } else {
+          if (property.isArray) {
             if (!schema.items) {
               schema.type = 'array'
               schema.items = {} as SchemaType
             }
             this.applyIsNotInDecorator(decorator, schema.items)
+          } else {
+            this.applyIsNotInDecorator(decorator, schema)
           }
           break
       }
