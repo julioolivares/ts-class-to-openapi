@@ -1,3 +1,4 @@
+import { IsNotIn } from 'class-validator'
 import path from 'path'
 
 const messages = {
@@ -99,6 +100,8 @@ const validatorDecorators = {
   ArrayMaxSize: { name: 'ArrayMaxSize' },
   ArrayMinSize: { name: 'ArrayMinSize' },
   IsEnum: { name: 'IsEnum', type: 'string' },
+  IsIn: { name: 'IsIn' },
+  IsNotIn: { name: 'IsNotIn' },
 }
 
 const tsUtilityTypes = {

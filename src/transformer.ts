@@ -803,8 +803,7 @@ export class SchemaTransformer {
     const runtimeProps = this.extractRuntimePropertyNames(cls)
 
     let bestMatch:
-      | { sourceFile: ts.SourceFile; node: ts.ClassDeclaration }
-      | undefined
+      { sourceFile: ts.SourceFile; node: ts.ClassDeclaration } | undefined
     let bestScore = -1
 
     for (const match of matches) {
@@ -1677,14 +1676,14 @@ export class SchemaTransformer {
           )
           break
         case constants.validatorDecorators.IsEnum.name:
-          if (!property.isArray) {
-            this.applyEnumDecorator(decorator, schema)
-          } else {
+          if (property.isArray) {
             if (!schema.items) {
               schema.type = 'array'
               schema.items = {} as SchemaType
             }
             this.applyEnumDecorator(decorator, schema.items)
+          } else {
+            this.applyEnumDecorator(decorator, schema)
           }
           break
       }

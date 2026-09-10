@@ -26,6 +26,7 @@
   ],
   "scripts": {
     "test": "tsx --test test/testCases/*.test.ts",
+    "prettier": "prettier --write ./src/",
     "test:watch": "tsx --inspect --test --watch test/testCases/*.test.ts",
     "test:coverage": "tsx --test --experimental-test-coverage test/testCases/*.test.ts",
     "build": "tsc --noEmit && tsdown",
